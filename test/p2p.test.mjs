@@ -5,9 +5,10 @@ import '../public/engine.js';
 import '../public/bot.js';
 import '../public/table.js';
 import '../public/p2p.js';
-const { P2P, Bot } = globalThis.Pusoy;
+import { createHash } from 'node:crypto';
+const { P2P, Bot, TableCore } = globalThis.Pusoy;
 
-Object.assign(P2P.timing, { heartbeat: 40, hostLost: 220, recover: 500, connect: 600, announce: 120, tableTtl: 400, searching: 150, linger: 20 });
+Object.assign(P2P.timing, { heartbeat: 40, hostLost: 220, recover: 500, connect: 600, announce: 120, tableTtl: 400, searching: 150, linger: 20, pinWait: 150 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms = 4000, what = 'condition') => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return; await sleep(10); } throw new Error('timed out waiting for ' + what); };
 
@@ -57,7 +58,7 @@ const H = browser('Hana', 0), A = browser('Ari', 1), B = browser('Bea', 2), L = 
 L.openLobby(); H.openLobby();
 await until(() => L.lobbyData, 1000, 'lobby to start');
 assert.equal(L.lobbyData.tables.length, 0);
-H.lobby.send({ t: 'create', o: { name: 'Friday <b>Night</b>', pub: true, rounds: 2, turnSecs: 30, botMs: [4, 8] } });
+H.lobby.send({ t: 'create', o: { name: 'Friday <b>Night</b>', pub: true, rounds: 2, turnSecs: 30, botMs: [4, 8], bots: 'easy' } });
 await until(() => H.go);
 const code = H.go;
 assert.match(code, /^[A-Z]{4}$/);
@@ -68,6 +69,8 @@ await until(() => L.lobbyData.tables.some((t) => t.code === code), 2000, 'table 
 const row = L.lobbyData.tables.find((t) => t.code === code);
 assert.equal(row.name, 'Friday bNight/b');
 assert.deepEqual(row.seats.map((x) => (x ? x.name : null)), ['Hana', null, null, null]);
+assert.equal(row.bots, 'easy');                 // the bot level the host picked is on the table and in the lobby row
+assert.equal(H.state.bots, 'easy');
 ok('a hosted table appears in live tables, with its seats');
 
 // ---- 2. two players join by code ---------------------------------------------
@@ -111,11 +114,13 @@ const hostSeat = H.state.you, nextSeat = [1, 2, 3].map((i) => (hostSeat + i) % 4
 const heir = [A, B].find((x) => x.state.you === nextSeat), other = heir === A ? B : A;
 await sleep(60);
 const round = heir.state.round, scores = heir.state.seats.map((x) => x.score).join();
+const midRound = heir.state.phase === 'playing';
 H.session.kill(); vanish('Hana');
 await until(() => heir.session.hosting, 3000, 'the next player to become host');
 await until(() => other.status === 'online' && other.state && other.state.seats[hostSeat].bot, 3000, 'the other guest to follow the new host');
 assert.equal(heir.state.seats[hostSeat].bot, true);                         // a bot sits where the host was
 assert.equal(heir.state.round, round);
+assert.equal(heir.state.bots, 'easy');                                      // the bot level moved with the table
 assert.deepEqual(humans(heir.state).sort(), [heir.name, other.name].sort());
 assert.ok(heir.errors.some((e) => e.code === 'note'));
 ok(`host dropped: ${heir.name} took over, a bot took the old seat, same round`);
@@ -125,7 +130,7 @@ ok('live tables now lists the table under its new host, once');
 // the round still finishes, and the scores carried over
 await until(() => heir.state.phase !== 'playing' || heir.state.round > round, 20000, 'the round to finish under the new host');
 assert.equal(heir.state.seats.reduce((s, x) => s + x.score, 0), 0);
-if (round === 1) assert.ok(scores === '0,0,0,0');
+if (round === 1 && midRound) assert.ok(scores === '0,0,0,0');
 ok('the round finishes under the new host with scores intact');
 
 // ---- 5. someone new joins and takes the bot's place ----------------------------
@@ -182,6 +187,141 @@ ok('quick join opens a table when none exist and picks an open one when there is
 const Z = browser('Zed'); Z.sit('ZZZZ');
 await until(() => Z.errors.some((e) => e.code === 'gone'), 2000, 'give-up message');
 ok('joining a table that does not exist ends with a clear message');
+
+// =================== people who do not play by the rules ===================
+// Mallory is a raw connection: she can join any room and send anything at all.
+function rogue(id, roomId) {
+  const raw = transportFor(id)(roomId), got = [];
+  raw.setHandlers({ msg: (m, from) => got.push({ m, from }), join() {}, leave() {} });
+  return { raw, got, joins: () => got.filter((x) => x.m && x.m.t === 'join') };
+}
+
+// ---- 11. seat tokens: the saved key never leaves the browser --------------------
+for (const text of ['', 'abc', 'pusoy', 'x'.repeat(55), 'y'.repeat(56), 'z'.repeat(200), 'ñ ♦ 2']) {
+  assert.equal(P2P.sha256(text), createHash('sha256').update(text, 'utf8').digest('hex'));
+}
+{
+  const fakeHost = rogue('Mallory-host', 'table-QQQQ');
+  const beat = setInterval(() => fakeHost.raw.send({ t: 'host', epoch: 1, backup: null }), 20);
+  const V = browser('Vic'); V.sit('QQQQ');
+  await until(() => fakeHost.joins().length > 0, 2000, 'guest to introduce itself');
+  const key = fakeHost.joins()[0].m.key;
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.ok(!JSON.stringify(fakeHost.got).includes(V.profile.key));          // the real key is nowhere in what a host is sent
+  assert.equal(key, P2P.tokenOf(V.profile, 'QQQQ'));
+  assert.notEqual(key, P2P.tokenOf(V.profile, 'QQQR'));                       // and the token is useless at any other table
+  ok('a host is shown a one-table token, never the player\'s saved key');
+
+  // ---- 12. a hostile host cannot put markup or junk on a guest's screen ----------
+  const evil = '<img src=x onerror=alert(1)>';
+  fakeHost.raw.send({ t: 'state', ev: [{ k: 'chat', seat: 1, text: evil }, { k: 'play', seat: 1, cards: ['<b>', 3, 9] }, { k: 'join', seat: 9, name: evil }, { k: 'join', seat: 2, name: evil }, 'junk', null],
+    s: { code: evil, name: evil, pub: 1, rounds: 1e9, turnSecs: -5, phase: 'playing', round: 2.5, you: 0, seq: 7, bots: evil, aids: true, seen: [1, 2, 3],
+      seats: [0, 1, 2, 3].map((i) => ({ name: evil + i, av: 99, bot: 'yes', on: 1, n: 400, passed: 0, score: '12', wins: {} })),
+      hand: [5, 5, '6', 51.5, -1, 99, 7, { toString() { return evil; } }], turn: '0', table: { cards: [evil], by: 7, name: evil, power: 1e9 },
+      trick: [{ cards: [8, 12], by: 1 }, { cards: [4], by: evil }], mustOpen: 'x', turnAt: evil, nextAt: NaN, now: evil, result: { winner: evil } } }, 'Vic');
+  await until(() => V.state, 2000, 'cleaned state');
+  const flat = JSON.stringify([V.state, V.evs]);
+  assert.ok(!flat.includes('<') && !flat.includes('>'), 'markup reached the page: ' + flat.slice(0, 600));
+  assert.equal(V.state.code, 'QQQQ');
+  assert.deepEqual(V.state.hand, [5, 7]);                                   // only real, distinct cards survive
+  assert.equal(V.state.table, null);
+  assert.deepEqual(V.state.trick, [{ cards: [4], by: 0 }]);                 // cards 8 and 12 are not a pair
+  assert.equal(V.state.aids, false); assert.deepEqual(V.state.seen, []);
+  assert.equal(V.state.rounds, 5); assert.equal(V.state.bots, 'normal'); assert.equal(V.state.turn, -1);
+  assert.ok(V.state.seats.every((x) => x.n === 0 && x.av === 0 && x.score === 0 && typeof x.name === 'string'));
+  assert.deepEqual(V.evs.map((e) => e.k), ['chat', 'join']);                // the bogus play and the seat-9 notice were dropped
+  const before = V.state;
+  for (const junk of [null, 'state', { seats: [] }, { seats: [1, 2, 3, 4], phase: 'playing', you: 5 }, { seats: [{}, {}, {}, {}], phase: 'roundEnd', you: 0 }]) fakeHost.raw.send({ t: 'state', s: junk, ev: [] }, 'Vic');
+  fakeHost.raw.send({ t: 'error', code: 'gone', msg: evil + ' bye' }, 'Vic');
+  await until(() => V.errors.some((e) => e.code === 'gone'), 2000, 'closing message');
+  assert.equal(V.state, before);                                            // malformed states never replaced the good one
+  assert.ok(!V.errors.some((e) => e.msg.includes('<')));
+  clearInterval(beat); fakeHost.raw.leave();
+  ok('whatever a host sends is rebuilt before the page sees it: no markup, no impossible cards');
+}
+
+// ---- 13. "I am the host now": ignored unless the real host named you -------------
+{
+  const H3 = browser('Hugo'), G3 = browser('Gail', 1), K3 = browser('Kit', 2), L3 = browser('Lena', 3);
+  H3.openLobby(); L3.openLobby();
+  H3.lobby.send({ t: 'create', o: { name: 'Honest table', pub: true, rounds: 1, turnSecs: 30, botMs: [4, 8] } });
+  await until(() => H3.go); const c3 = H3.go; H3.lobby.close(); H3.sit(c3);
+  await until(() => L3.lobbyData && L3.lobbyData.tables.some((t) => t.code === c3), 2000, 'table listed');
+  const M = rogue('Mallory', 'table-' + c3);
+  const spam = setInterval(() => { M.raw.send({ t: 'hb', epoch: 999, backup: 'Mallory' }); M.raw.send({ t: 'host', epoch: 999, backup: 'Mallory' }); M.raw.send({ t: 'handover', epoch: 999, to: 'Mallory' }); }, 15);
+  G3.sit(c3);
+  await until(() => G3.state && humans(H3.state).length === 2, 3000, 'first guest');
+  K3.sit(c3);
+  await until(() => K3.state && humans(H3.state).length === 3, 3000, 'second guest');
+  await sleep(300);
+  assert.equal(H3.session.hosting, true);
+  assert.ok(!H3.errors.some((e) => e.code === 'moved'));                     // the real host was not talked into stepping down
+  assert.equal(G3.status, 'online'); assert.equal(K3.status, 'online');
+  assert.equal(M.joins().length, 0);                                         // and nobody sat down with the impostor
+  ok('a stranger announcing "I host this table" is ignored by the host and every guest');
+
+  // someone browsing the lobby sits with the host that listed the table, even if an impostor speaks first
+  L3.sit(c3);
+  await until(() => L3.state && humans(H3.state).length === 4, 3000, 'lobby joiner');
+  assert.equal(M.joins().length, 0);
+  ok('joining from live tables goes to the host that listed the table');
+
+  // the impostor copies a live table's code into the lobby: still one row, the real one
+  const ML = rogue('Mallory', 'lobby'), W = browser('Wren'); W.openLobby();
+  await until(() => W.lobbyData && W.lobbyData.tables.some((t) => t.code === c3), 2000, 'lobby');
+  for (let i = 0; i < 20; i++) ML.raw.send({ t: 'tbl', s: { code: c3, name: 'Free chips here', pub: true, phase: 'waiting', round: 0, rounds: 5, seats: [null, null, null, null] } });
+  await sleep(200);
+  const rows = W.lobbyData.tables.filter((t) => t.code === c3);
+  assert.equal(rows.length, 1); assert.equal(rows[0].name, 'Honest table');
+  ok('a copied table code does not get a second row in live tables');
+
+  // the real host drops: only the successor it named (the next player) is followed
+  H3.session.send({ t: 'start' });
+  await until(() => K3.state.phase === 'playing', 2000, 'deal');
+  [G3, K3, L3].forEach((b) => b.autoplay());
+  await sleep(120);
+  const seat = H3.state.you;
+  H3.session.kill(); vanish('Hugo');
+  await until(() => [G3, K3, L3].some((b) => b.session.hosting), 4000, 'successor to take over');
+  const heir3 = [G3, K3, L3].find((b) => b.session.hosting), rest = [G3, K3, L3].filter((b) => b !== heir3);
+  await until(() => rest.every((b) => b.status === 'online' && b.state.seats[seat].bot), 4000, 'guests to follow the successor');
+  assert.equal(M.joins().length, 0);
+  assert.equal(heir3.state.seats.filter((x) => !x.bot).length, 3);
+  ok(`host gone: everyone followed ${heir3.name}, the named successor, not the impostor`);
+  clearInterval(spam); M.raw.leave(); ML.raw.leave();
+
+  // a flood from one seat is dropped without stalling the table, and an old-style raw key is not a ticket
+  const F = rogue('Flood', 'table-' + c3);
+  F.raw.send({ t: 'join', key: rest[0].profile.key, name: 'Ghost', av: 0 }, heir3.name);
+  for (let i = 0; i < 400; i++) F.raw.send({ t: 'act', m: { t: 'chat', text: 'x'.repeat(5000) } }, heir3.name);
+  await sleep(150);
+  assert.ok(!F.got.some((x) => x.m.t === 'state'));
+  assert.equal(heir3.state.seats.filter((x) => !x.bot).length, 3);
+  F.raw.leave();
+  ok('a raw key gets no seat, and a message flood is shrugged off');
+  [G3, K3, L3].forEach((b) => { b.auto = null; b.session.kill(); vanish(b.name); });
+}
+
+// ---- 14. the table copy a successor starts from is checked too --------------------
+{
+  const core = TableCore.create({ code: 'ABCD', name: 'T', rounds: 3, turnSecs: 30, bots: 'hard', aids: true }, 0);
+  core.join('k' + 'a'.repeat(40), { name: 'Ana' }, 0); core.join('not-a-pid', { name: '<i>Bo</i>' }, 0);
+  core.act('k' + 'a'.repeat(40), { t: 'start' }, 0);
+  const copy = JSON.parse(JSON.stringify(core.s));
+  const good = P2P.cleanSnapshot(copy, 'ABCD');
+  assert.ok(good);
+  assert.deepEqual(good.hands, core.s.hands); assert.equal(good.turn, core.s.turn); assert.equal(good.opts.bots, 'hard');
+  assert.equal(good.opts.aids, false);                                       // hints can never be switched on for a live table
+  assert.equal(good.seats[0].pid, 'k' + 'a'.repeat(40));
+  assert.equal(good.seats[1].bot, true);                                     // a seat without a proper id goes back to a bot
+  assert.ok(!JSON.stringify(good).includes('<'));
+  const cheat = JSON.parse(JSON.stringify(core.s)); cheat.hands[1][0] = cheat.hands[0][0];      // the same card in two hands
+  assert.equal(P2P.cleanSnapshot(cheat, 'ABCD'), null);
+  const short = JSON.parse(JSON.stringify(core.s)); short.hands[2].pop();                       // a card missing from the deck
+  assert.equal(P2P.cleanSnapshot(short, 'ABCD'), null);
+  assert.equal(P2P.cleanSnapshot({ seats: 'x' }, 'ABCD'), null);
+  ok('a table copy with cards that do not add up is refused');
+}
 
 console.log(`p2p: ${n} checks passed`);
 process.exit(0);

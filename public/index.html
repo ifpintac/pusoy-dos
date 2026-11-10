@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#2F6D70">
+<!-- Only this folder's own scripts may run, so nothing a stranger types or sends can ever become code. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss: https:; object-src 'none'; base-uri 'none'">
 <meta name="description" content="Pusoy Dos: dump your hand before anyone else. Play solo against bots or jump into a live table.">
 <title>Pusoy Dos</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232F6D70'/%3E%3Crect x='16' y='9' width='32' height='46' rx='5' fill='%23F7F1E3' stroke='%23131D28' stroke-width='3'/%3E%3Cpath d='M32 18l11 14-11 14-11-14z' fill='%23D8473E'/%3E%3C/svg%3E">
@@ -40,7 +42,7 @@
 
     <section class="solo">
       <button class="btn btn-play btn-big" id="btn-solo">Play solo</button>
-      <p class="note"><span id="solo-note">3 bots, 5 rounds, no clock.</span>
+      <p class="note"><span id="solo-note">3 normal bots, 5 rounds, no clock.</span>
         <button class="link" id="btn-solo-opts">Change</button></p>
     </section>
 
@@ -61,6 +63,7 @@
       <button class="pill" id="btn-rules">How to play</button>
       <button class="pill" id="btn-board">Hall of fame</button>
       <button class="pill" id="btn-sound-home">Sound on</button>
+      <button class="pill" id="btn-fx-home">Effects: full</button>
     </footer>
   </div>
 </main>
@@ -150,17 +153,25 @@
       <label><input type="radio" name="pub" value="1" checked><span>Anyone<small>Shows in live tables</small></span></label>
       <label><input type="radio" name="pub" value="0"><span>Invite only<small>Share the link or code</small></span></label>
     </fieldset>
-    <fieldset class="seg">
-      <legend>Rounds</legend>
-      <label><input type="radio" name="rounds" value="3"><span>3</span></label>
-      <label><input type="radio" name="rounds" value="5" checked><span>5</span></label>
-      <label><input type="radio" name="rounds" value="10"><span>10</span></label>
-    </fieldset>
-    <fieldset class="seg" id="new-clock-field">
-      <legend>Seconds per turn</legend>
-      <label><input type="radio" name="secs" value="15"><span>15</span></label>
-      <label><input type="radio" name="secs" value="30" checked><span>30</span></label>
-      <label><input type="radio" name="secs" value="60"><span>60</span></label>
+    <div class="pair">
+      <fieldset class="seg">
+        <legend>Rounds</legend>
+        <label><input type="radio" name="rounds" value="3"><span>3</span></label>
+        <label><input type="radio" name="rounds" value="5" checked><span>5</span></label>
+        <label><input type="radio" name="rounds" value="10"><span>10</span></label>
+      </fieldset>
+      <fieldset class="seg" id="new-clock-field">
+        <legend>Seconds per turn</legend>
+        <label><input type="radio" name="secs" value="15"><span>15</span></label>
+        <label><input type="radio" name="secs" value="30" checked><span>30</span></label>
+        <label><input type="radio" name="secs" value="60"><span>60</span></label>
+      </fieldset>
+    </div>
+    <fieldset class="seg" id="new-bots-field">
+      <legend id="new-bots-legend">Bots</legend>
+      <label><input type="radio" name="bots" value="easy"><span>Easy<small>Beginner</small></span></label>
+      <label><input type="radio" name="bots" value="normal" checked><span>Normal<small>Smart</small></span></label>
+      <label><input type="radio" name="bots" value="hard"><span>Hard<small>Expert</small></span></label>
     </fieldset>
     <label class="check">
       <input type="checkbox" id="new-lock" checked>

@@ -30,9 +30,24 @@ What to know about hosting this way:
 - **The host holds the deck.** A technically minded host could look at everyone's cards, and so could the one player lined up to take over. Play with people you trust.
 - **Hosts should keep the tab open.** If the host's phone locks or the tab is closed, the table moves to the next player.
 - **Some networks block direct connections.** Strict mobile carriers and office networks can stop two players from reaching each other. A TURN server fixes this; see `public/config.js`.
-- **Players connect directly,** so, as with any peer-to-peer game, they can technically see each other's IP addresses.
+- **Players connect directly,** so, as with any peer-to-peer game, they can technically see each other's IP addresses. That includes everyone on the home screen while the live-tables list is open, not only the people at your table. A TURN server set to relay-only would hide them.
 - **The public relays belong to other people.** They are free and there are many of them, but they can be slow or unavailable. You can list your own in `public/config.js`.
 - **No hall of fame.** Without a neutral referee, wins can't be trusted, so it is switched off.
+
+### What a stranger can and cannot do
+
+Anyone can open the page, join a room and send whatever they like, so the game treats everything from the network as untrusted.
+
+| Someone tries to | What happens |
+| --- | --- |
+| Announce "I host this table now" | Ignored. A player only accepts the host they sat down with and, once that host is gone, the one successor that host named. A real host only steps aside for a successor it named itself. |
+| Put markup or nonsense on other players' screens (names, chat, table names, cards) | Everything a host or the lobby sends is rebuilt field by field before the page uses it: text is stripped of markup, cards must be real and distinct, numbers are clamped. The page also carries a content security policy, so only the game's own script files can run. |
+| Take someone's seat by replaying their identity | A player's saved key never leaves their browser. A host is shown a token that only works for that one table code, and the table copy kept by the successor stores only a hash of it. |
+| List a fake table under a real table's code | The list keeps one row per code, from whoever listed it first, and joining from the list goes to that host. |
+| Flood a host with messages | Anything beyond 30 messages a second from one connection is dropped, and oversized chat is cut before it is looked at. |
+| Hand a successor a rigged table | The table copy is checked when it is taken over: all 52 cards must be accounted for exactly once, or the handover is refused. |
+
+What this does not fix, because it needs a neutral referee: a host can read the deck, and a host can simply cheat or close the table. The player named as successor can read the deck too. `npm test` includes these attacks.
 
 ## Optional: a referee server
 
@@ -59,6 +74,40 @@ Then set `window.PUSOY_SERVER = 'same';` in `public/config.js` (or the Worker's 
 
 House rules vary from group to group. The rules live in `public/engine.js` (hands and comparisons) and `public/table.js` (turn order, passing, scoring) if you want to bend them.
 
+## Bots
+
+Pick the level when you start a solo game or open a table. At a table it applies to every open seat.
+
+| Level | How it plays |
+| --- | --- |
+| Easy | A beginner: dumps its lowest cards, breaks up its own hands, burns 2s early, and never notices that someone is about to go out. |
+| Normal | Plans its hand into groups, sheds weak cards first, saves 2s and big hands to win the lead back, and blocks a player who is on their last card. |
+| Hard | Normal, plus it counts cards, so it knows exactly which of its plays nobody can beat. It also thinks ahead: it deals the unseen cards out at random a few times, plays each option to the end of the round, and keeps the one that scores best. |
+
+No level cheats. Bots only use what a player at the table could know: their own hand, how many cards everyone holds, and what has been played.
+
+Measured with `npm run duel` (one bot against three of another level; 25% of rounds won means no edge):
+
+| Match-up | Rounds won | Points per round |
+| --- | --- | --- |
+| Easy against three Normal | 15% | -2.6 |
+| Normal against three Easy | 37% | +1.7 |
+| Hard against three Normal | 31% | +4.2 |
+
+Hard's thinking takes about 30 ms a move on the device that referees the table (`THINK_MS` in `public/net.js`), so a slow phone gets fewer look-aheads and plays a little weaker. On the optional referee server it is off by default to stay inside the free plan's CPU limit, which leaves Hard there about as strong as Normal; `BOT_THINK_MS` in `server.js` turns it on. The Hint button in solo games always uses the Hard brain.
+
+A bot covering for a player who stepped away plays at Normal whatever the table is set to.
+
+## Keeping it smooth
+
+The table is drawn so that nothing moves unless something happened: while you think about your move, the browser draws nothing at all.
+
+- The background is painted once. It used to drift, which made the whole screen redraw 60 times a second for as long as the page was open.
+- Shines, pulses and the sunburst only slide, scale or fade ready-made pictures. They no longer repaint cards every frame.
+- The spark canvas is capped at about a million pixels whatever the screen size, only clears the patch it drew on, and leaves the page when it is empty.
+- If a device still falls under 30 frames a second during a big effect, the game quietly uses fewer sparks from then on.
+- **Effects: light** on the home screen switches off the decoration (shines, pulses, screen shake, sunburst) and thins the sparks, for devices that find the full show heavy. The browser's "reduce motion" setting is respected as before.
+
 ## What's where
 
 ```
@@ -70,7 +119,7 @@ public/net.js       solo / live table / lobby connections
 public/p2p.js       player-hosted tables: hosting, joining, host handover, the live list
 public/vendor/      Trystero (matchmaking + WebRTC), bundled into one file
 public/engine.js    the rules: what a hand is, what beats what, dealing
-public/bot.js       the computer players (also powers the Hint button)
+public/bot.js       the computer players, three levels (also powers the Hint button)
 public/table.js     one table: seats, turns, passing, scoring, timers
 public/config.js    player-hosted (default) or referee server, plus relay/TURN options
 server.js           optional referee server (Cloudflare Worker)
@@ -87,6 +136,8 @@ _old-v1/            the original game, untouched, for reference
 npm install
 npm test                 # rules, 300 simulated matches, and player-hosted tables (hosting, joining, handover)
 ```
+
+`npm run duel` pits the bot levels against each other and prints how often each wins (add a number of rounds, then `30` to let Hard think ahead: `npm run duel 1000 30`).
 
 The player-hosted test uses pretend browsers on an in-memory network, so it needs no internet. To check the optional referee server, run `npm run dev` in one terminal and `npm run test:online` in another.
 

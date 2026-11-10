@@ -18,6 +18,10 @@ const { TableCore, cleanText } = globalThis.Pusoy;
 const HEARTBEAT_MS = 4 * 60 * 1000;     // how often a quiet table tells the lobby it is still there
 const STALE_MS = 10 * 60 * 1000;        // the lobby forgets tables it hasn't heard from for this long
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+// Hard bots can look ahead by playing the round out many times, which costs CPU
+// (tens of milliseconds a move). 0 keeps them to card counting, which fits the free
+// plan's CPU limit; on a paid plan set this to 30 to match player-hosted tables.
+const BOT_THINK_MS = 0;
 const PLACES = ['Neon Room', 'Lucky Sevens', 'High Rollers', 'Bonus Stage', 'Wild Cards', 'Double Down', 'Card Sharks', 'Night Shift', 'Final Round', 'Coin Slot', 'Top Deck', 'Player Two'];
 
 export default {
@@ -134,7 +138,8 @@ export class Lobby extends DurableObject {
         if (this.tables[code]) continue;
         const summary = await this.env.TABLE.get(this.env.TABLE.idFromName(code)).init({
           code, name: cleanText(o.name, 28) || fallback, pub: o.pub !== false,
-          rounds: o.rounds, turnSecs: o.turnSecs || 30, passLock: o.passLock !== false
+          rounds: o.rounds, turnSecs: o.turnSecs || 30, passLock: o.passLock !== false,
+          bots: o.bots, think: BOT_THINK_MS
         });
         if (!summary) continue;            // that code is in use by a private table
         this.tables[code] = { ...summary, at: now };

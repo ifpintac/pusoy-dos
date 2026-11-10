@@ -181,4 +181,52 @@ t('view hides other hands', () => {
   assert.deepEqual(v.seats.map((x) => x.n), [13, 13, 13, 13]);
 });
 
+t('bot levels: the table keeps a valid level and shows it', () => {
+  assert.equal(TableCore.create({}, 0).s.opts.bots, 'normal');
+  assert.equal(TableCore.create({ bots: 'insane' }, 0).s.opts.bots, 'normal');
+  const core = TableCore.create({ bots: 'hard', pub: true }, 0);
+  core.join('a', { name: 'a' }, 0);
+  assert.equal(core.view(0, 0).bots, 'hard');
+  assert.equal(core.summary().bots, 'hard');
+});
+
+t('hard bots count cards: "nobody can beat this" matches a full search of the unseen cards', () => {
+  let agree = 0;
+  for (let round = 0; round < 60; round++) {
+    const deck = E.shuffledDeck();
+    const hand = deck.slice(0, 13).sort((a, b) => a - b);
+    const seen = deck.slice(13, 13 + (round * 7) % 30);
+    const pool = deck.slice(13 + seen.length);
+    const k = Bot.knowledge({ hand, seen, seat: 0, counts: [13, 13, 13, 13] });
+    assert.deepEqual(k.pool, pool.slice().sort((a, b) => a - b));
+    for (const g of E.legalPlays(hand, null, false)) {
+      const can = E.legalPlays(pool, g, false).length > 0;
+      assert.equal(Bot.unbeatable(g, k), !can, g.name);
+      agree++;
+    }
+  }
+  assert.ok(agree > 1000);
+  // and nobody with fewer cards than the hand can answer it at all
+  const k = Bot.knowledge({ hand: h('5c 5s'), seen: [], seat: 0, counts: [2, 1, 1, 1] });
+  assert.ok(Bot.unbeatable(ev('5c 5s'), k));
+});
+
+t('hard bots cash a sure winner first; normal bots do not see it', () => {
+  // Every card above the ace of hearts has been played, so it cannot lose.
+  const view = { hand: h('5c 5s Ah'), table: null, seat: 0, mustOpen: false, counts: [3, 5, 5, 5],
+    passed: [false, false, false, false], seen: h('Ad 2c 2s 2h 2d') };
+  assert.deepEqual(Bot.choose({ ...view, level: 'hard' }), h('Ah'));
+  assert.deepEqual(Bot.choose({ ...view, level: 'hard', think: 5 }), h('Ah'));
+  assert.deepEqual(Bot.choose({ ...view, level: 'normal' }), h('5c 5s'));
+  assert.deepEqual(Bot.choose({ ...view }), h('5c 5s'));                       // no level given = normal
+});
+
+t('easy bots dump their lowest card and follow with the cheapest play', () => {
+  const lead = { hand: h('3s 9c 9d 2d'), table: null, seat: 0, mustOpen: false, counts: [4, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
+  assert.deepEqual(Bot.choose(lead), h('3s'));
+  // down to three cards it never chickens out, and it will happily burn the 2 of diamonds
+  const follow = { hand: h('4c 6s 2d'), table: { ...ev('Ks'), by: 1 }, seat: 0, mustOpen: false, counts: [3, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
+  assert.deepEqual(Bot.choose(follow), h('2d'));
+});
+
 console.log(`rules: ${n} groups of checks passed`);

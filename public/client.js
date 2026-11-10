@@ -22,11 +22,12 @@
     for (var i = 0; i < a.length; i++) s += ('0' + a[i].toString(16)).slice(-2);
     return s;
   }
-  var me = { name: '', av: Math.floor(Math.random() * 6), key: randomKey(), sound: true, sort: 'rank', rounds: 5, passLock: true };
+  var me = { name: '', av: Math.floor(Math.random() * 6), key: randomKey(), sound: true, sort: 'rank', rounds: 5, passLock: true, bots: 'normal', lite: false };
   try {
     var saved = JSON.parse(localStorage.getItem('pusoy2') || 'null');
     if (saved && typeof saved === 'object') for (var k in me) if (saved[k] !== undefined && typeof saved[k] === typeof me[k]) me[k] = saved[k];
   } catch (e) { /* private mode: fine, nothing is remembered */ }
+  if (Bot.LEVELS.indexOf(me.bots) < 0) me.bots = 'normal';
   function save() { try { localStorage.setItem('pusoy2', JSON.stringify(me)); } catch (e) { /* ignore */ } }
   save();
   // Each browser tab is its own player at player-hosted tables, so you can try a
@@ -166,7 +167,7 @@
 
   function buildBackdrop() {
     var html = '';
-    for (var i = 0; i < 12; i++) {
+    for (var i = 0; i < 6; i++) {
       var size = 40 + Math.random() * 90, dur = 22 + Math.random() * 26;
       html += '<svg viewBox="0 0 24 24" style="left:' + (Math.random() * 100).toFixed(1) + '%;width:' + size.toFixed(0) + 'px;height:' + size.toFixed(0) +
         'px;animation-duration:' + dur.toFixed(1) + 's;animation-delay:-' + (Math.random() * dur).toFixed(1) + 's"><use href="#suit' + (i % 4) + '"/></svg>';
@@ -228,24 +229,29 @@
       if (lobbyState === 'online') lobby.send({ t: 'board' });
     });
     $('btn-sound-home').addEventListener('click', toggleSound);
+    $('btn-fx-home').addEventListener('click', function () { me.lite = !me.lite; save(); renderFx(); });
 
     $('form-new').addEventListener('submit', function (e) {
       if (e.submitter && e.submitter.value === 'cancel') return;
       var f = e.target, rounds = +f.rounds.value, lock = $('new-lock').checked;
+      me.bots = Bot.LEVELS.indexOf(f.bots.value) >= 0 ? f.bots.value : 'normal';
       if (f.dataset.solo) {
         me.rounds = rounds; me.passLock = lock; save(); renderSoloNote();
         startSolo();
       } else {
+        save(); renderSoloNote();
         pendingGo = true;
-        lobby.send({ t: 'create', o: { name: $('new-name').value, pub: f.pub.value === '1', rounds: rounds, turnSecs: +f.secs.value, passLock: lock } });
+        lobby.send({ t: 'create', o: { name: $('new-name').value, pub: f.pub.value === '1', rounds: rounds, turnSecs: +f.secs.value, passLock: lock, bots: me.bots } });
       }
     });
     renderSoloNote();
     renderSound();
+    renderFx();
     renderLobby();
   }
 
-  function renderSoloNote() { $('solo-note').textContent = '3 bots, ' + plural(me.rounds, 'round') + ', no clock.'; }
+  function renderSoloNote() { $('solo-note').textContent = '3 ' + me.bots + ' bots, ' + plural(me.rounds, 'round') + ', no clock.'; }
+  function botsLabel(level) { return level === 'easy' ? 'Easy bots' : level === 'hard' ? 'Hard bots' : 'Normal bots'; }
 
   function openNew(solo) {
     var f = $('form-new');
@@ -254,6 +260,8 @@
     $('new-ok').textContent = solo ? 'Deal me in' : 'Open table';
     $('new-name-field').hidden = $('new-pub-field').hidden = $('new-clock-field').hidden = solo;
     $('new-note').hidden = solo || Net.mode() !== 'p2p';
+    $('new-bots-legend').textContent = solo ? 'Bots' : 'Bots in the open seats';
+    f.bots.value = me.bots;
     if (solo) { f.rounds.value = String([3, 5, 10].indexOf(me.rounds) >= 0 ? me.rounds : 5); $('new-lock').checked = me.passLock; }
     else { $('new-name').value = ''; $('new-lock').checked = true; }
     openDialog($('dlg-new'));
@@ -296,6 +304,7 @@
         return x ? '<i style="--c:' + color(x.av) + '" title="' + esc(x.name) + '">' + initial(x.name) + '</i>' : '<i class="open" title="Open seat"></i>';
       }).join('');
       var when = t.phase === 'waiting' ? 'Waiting to deal' : t.phase === 'matchEnd' ? 'Between matches' : 'Round ' + t.round + ' of ' + t.rounds;
+      if (open && t.bots && t.bots !== 'normal') when += ' · ' + botsLabel(t.bots);
       return '<div class="trow"><div><div class="tn">' + esc(t.name) + '</div>' +
         '<div class="ts"><span class="dots">' + dots + '</span>' + when + '</div></div>' +
         '<button class="btn btn-play" data-code="' + esc(t.code) + '"' + (open ? '' : ' disabled') + '>' + (open ? 'Join' : 'Full') + '</button></div>';
@@ -316,6 +325,12 @@
     $('btn-sound').setAttribute('aria-label', me.sound ? 'Turn sound off' : 'Turn sound on');
   }
   function toggleSound() { me.sound = !me.sound; save(); renderSound(); if (me.sound) sfx.pick(3); }
+  /* "Effects: light" keeps the game's moves and drops the decoration; for devices that find the full show heavy. */
+  function renderFx() {
+    $('btn-fx-home').textContent = me.lite ? 'Effects: light' : 'Effects: full';
+    document.body.classList.toggle('lite', me.lite);
+    FX.setLite(me.lite);
+  }
 
   function showRules() {
     var c = function (rank, suit) { return E.RANKS.indexOf(rank) * 4 + suit; };
@@ -365,6 +380,8 @@
   function show(screen) {
     $('home').hidden = screen !== 'home';
     $('game').hidden = screen !== 'game';
+    document.body.classList.toggle('in-game', screen === 'game');     // the table has no moving backdrop
+    handBox = null;
   }
 
   function handlers() {
@@ -408,7 +425,7 @@
     setHash('');
     // add ?fast to the address to make the bots play instantly (handy when testing)
     var fast = /[?&]fast\b/.test(location.search) ? [60, 120] : null;
-    session = Net.solo({ rounds: me.rounds, passLock: me.passLock, botMs: fast }, profile(), handlers());
+    session = Net.solo({ rounds: me.rounds, passLock: me.passLock, bots: me.bots, botMs: fast }, profile(), handlers());
     session.send({ t: 'start' });
   }
 
@@ -437,7 +454,8 @@
 
   function onState(v, ev) {
     var first = !view;
-    var rects = captureHandRects();
+    // Where my cards are now, so the ones I just played can fly from there. Only measured when it was my turn.
+    var rects = view && view.phase === 'playing' && view.turn === view.you ? captureHandRects() : {};
     clockSkew = v.now - Date.now();
     view = v; sending = false;
     sel = sel.filter(function (id) { return v.hand.indexOf(id) >= 0; });
@@ -578,7 +596,7 @@
 
   function renderHud() {
     $('t-round').textContent = view.phase === 'waiting' ? 'Get ready' : 'Round ' + view.round + '/' + view.rounds;
-    $('t-name').textContent = view.name + (session.hosting ? ' • you’re hosting' : '');
+    $('t-name').textContent = view.name + (session.solo ? ' • ' + botsLabel(view.bots) : session.hosting ? ' • you’re hosting' : '');
     var inv = $('btn-invite');
     inv.hidden = !!session.solo;
     inv.textContent = view.code;
@@ -747,6 +765,8 @@
 
   /* ---------- your hand ---------- */
 
+  var handBox = null;          // cached size of the hand area and of one card
+
   function captureHandRects() {
     var r = {};
     if (!handEl) return r;
@@ -783,7 +803,9 @@
   function layoutHand() {
     var ids = handEl._order || [], nodes = handEl._nodes || {}, n = ids.length;
     if (!n) return;
-    var W = handEl.clientWidth, cw = nodes[ids[0]].offsetWidth || 60;
+    // Measuring forces the browser to lay the page out, so the two sizes are read once and kept until the window changes.
+    if (!handBox || !handBox.W) handBox = { W: handEl.clientWidth, cw: nodes[ids[0]].offsetWidth || 60 };
+    var W = handBox.W, cw = handBox.cw;
     var step = n > 1 ? Math.min(cw * 0.8, (W - cw) / (n - 1)) : 0;
     var x0 = (W - (cw + step * (n - 1))) / 2;
     var fan = Math.min(1, W / 700);
@@ -899,8 +921,10 @@
     if (!hints || hintSeq !== view.seq) {
       hintSeq = view.seq; hintAt = -1;
       var all = legal();
+      // the hint is always the strongest brain, whatever level the bots are playing at
       var best = Bot.choose({ hand: view.hand, table: view.table, seat: view.you, mustOpen: view.mustOpen,
-        passed: view.seats.map(function (s) { return s.passed; }), counts: view.seats.map(function (s) { return s.n; }) });
+        passed: view.seats.map(function (s) { return s.passed; }), counts: view.seats.map(function (s) { return s.n; }),
+        seen: view.seen || [], passLock: view.passLock, level: 'hard', think: Net.THINK_MS });
       var front = [];
       if (best) front.push(best.slice().sort(function (a, b) { return a - b; }).join(','));
       if (!view.table && !view.mustOpen) Bot.plan(view.hand).groups.forEach(function (g) { front.push(g.cards.join(',')); });
@@ -940,13 +964,13 @@
     var w = $('waiting');
     if (view.phase !== 'waiting') { w.hidden = true; return; }
     var humans = view.seats.filter(function (s) { return !s.bot; }).length;
-    var sig = view.code + humans + (session.hosting ? 'h' : '');
+    var sig = view.code + humans + (session.hosting ? 'h' : '') + view.bots;
     w.hidden = false;
     if (w._sig === sig) return;
     w._sig = sig;
     w.innerHTML = '<h2>' + esc(view.name) + '</h2>' +
       '<p>' + (humans === 4 ? 'Full table. Deal whenever you’re ready.' :
-        plural(humans, 'player') + ' in. Bots fill the open seats, and anyone who joins later takes over a bot.') + '</p>' +
+        plural(humans, 'player') + ' in. ' + botsLabel(view.bots) + ' fill the open seats' + (session.solo ? '.' : ', and anyone who joins later takes over a bot.')) + '</p>' +
       '<button class="btn btn-play btn-big" id="btn-deal">Deal</button>' +
       (session.solo ? '' : '<div class="invite"><span>Code <strong>' + esc(view.code) + '</strong>' + (view.pub ? ', listed in live tables' : ', invite only') + '</span><button class="link" id="btn-copy">Share link</button></div>') +
       (session.hosting ? '<p class="hostnote">You’re hosting, so keep this tab open. If you leave, the next player takes over.</p>' : '');
@@ -1158,7 +1182,7 @@
       if (text && session) { session.send({ t: 'chat', text: text }); input.value = ''; $('chat-tray').hidden = true; }
     });
 
-    window.addEventListener('resize', function () { if (view) layoutHand(); });
+    window.addEventListener('resize', function () { handBox = null; if (view) layoutHand(); });
     setInterval(tickClock, 250);
 
     document.addEventListener('keydown', function (e) {

@@ -9,7 +9,8 @@
     "deploy": "wrangler deploy",
     "test": "node test/rules.test.mjs && node test/simulate.mjs 300 && node test/p2p.test.mjs",
     "test:online": "node test/online.test.mjs",
-    "relay": "node test/tools/local-relay.mjs"
+    "relay": "node test/tools/local-relay.mjs",
+    "duel": "node test/duel.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.159.0",

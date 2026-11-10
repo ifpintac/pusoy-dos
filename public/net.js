@@ -32,11 +32,16 @@
     return null;
   }
 
+  /* How long a hard bot may look ahead on each move, in milliseconds. It runs on
+   * whichever browser referees the table, so keep it short enough not to stutter. */
+  var THINK_MS = 30;
+
   /* ---------- solo ---------- */
   function solo(opts, profile, h) {
     var core = P.TableCore.create({
       code: 'SOLO', name: 'Solo table', rounds: opts.rounds, turnSecs: 0,
-      passLock: opts.passLock !== false, manualNext: true, aids: true, botMs: opts.botMs || [750, 1400]
+      passLock: opts.passLock !== false, manualNext: true, aids: true, botMs: opts.botMs || [750, 1400],
+      bots: opts.bots, think: THINK_MS
     }, Date.now());
     var timer = 0, dead = false;
     core.join('me', profile, Date.now());
@@ -153,5 +158,5 @@
     return sock;
   }
 
-  P.Net = { mode: mode, serverBase: serverBase, solo: solo, online: online, lobby: lobby };
+  P.Net = { mode: mode, serverBase: serverBase, solo: solo, online: online, lobby: lobby, THINK_MS: THINK_MS };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -38,6 +38,8 @@
         passLock: o.passLock !== false,               // pass = out until the table clears
         manualNext: !!o.manualNext,                   // solo: wait for a tap between rounds
         aids: !!o.aids,                               // solo only: hints, quick picks and the cards-played tracker
+        bots: Bot.LEVELS.indexOf(o.bots) >= 0 ? o.bots : 'normal',   // easy | normal | hard
+        think: clampInt(o.think, 0, 200, 0),          // ms a hard bot may spend looking ahead on each move
         botMs: o.botMs || [800, 1500]
       },
       seats: [0, 1, 2, 3].map(function (i) {
@@ -312,7 +314,11 @@
     if (smart) {
       cards = Bot.choose({
         hand: s.hands[i], table: s.table, seat: i, passed: s.passed, mustOpen: s.mustOpen,
-        counts: s.hands.map(function (h) { return h.length; })
+        counts: s.hands.map(function (h) { return h.length; }),
+        seen: s.seen || [],                    // public knowledge: a card counter would know it too
+        passLock: s.opts.passLock, think: s.opts.think || 0,
+        // a bot seat plays at the table's level; covering for a player who stepped away is always "normal"
+        level: s.seats[i].bot ? s.opts.bots : 'normal'
       });
     } else if (!s.table) {
       cards = [s.hands[i][0]];               // on the lead: lowest card (the 3 of clubs when opening)
@@ -382,6 +388,7 @@
     return {
       code: s.code, name: s.name, pub: s.pub,
       rounds: s.opts.rounds, turnSecs: s.opts.turnSecs, passLock: s.opts.passLock, manualNext: s.opts.manualNext,
+      bots: s.opts.bots || 'normal',
       phase: s.phase, round: s.round, you: i, seq: s.seq,
       seats: s.seats.map(function (x, k) {
         return { name: x.name, av: x.av, bot: x.bot, on: x.bot || x.on, n: s.hands[k].length, passed: s.passed[k], score: s.scores[k], wins: s.wins[k] };
@@ -399,7 +406,7 @@
     var s = this.s;
     return {
       code: s.code, name: s.name, pub: s.pub, phase: s.phase, round: s.round, rounds: s.opts.rounds,
-      turnSecs: s.opts.turnSecs,
+      turnSecs: s.opts.turnSecs, bots: s.opts.bots || 'normal',
       seats: s.seats.map(function (x) { return x.bot ? null : { name: x.name, av: x.av }; })
     };
   };

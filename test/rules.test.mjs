@@ -1,0 +1,184 @@
+// Rule checks for the Pusoy Dos engine.  Run: npm test
+import assert from 'node:assert/strict';
+import '../public/engine.js';
+import '../public/bot.js';
+import '../public/table.js';
+const { Engine: E, Bot, TableCore } = globalThis.Pusoy;
+
+const R = { '3': 0, '4': 1, '5': 2, '6': 3, '7': 4, '8': 5, '9': 6, '10': 7, J: 8, Q: 9, K: 10, A: 11, '2': 12 };
+const S = { c: 0, s: 1, h: 2, d: 3 };
+// "9h" -> id, "10d", "2c" ...
+const c = (t) => R[t.slice(0, -1)] * 4 + S[t.slice(-1)];
+const h = (str) => str.split(' ').map(c);
+const ev = (str) => E.evaluate(h(str));
+let n = 0;
+const t = (name, fn) => { fn(); n++; };
+
+t('card order: 3 of clubs lowest, 2 of diamonds highest', () => {
+  assert.equal(c('3c'), 0); assert.equal(c('2d'), 51);
+  assert.ok(c('3d') < c('4c'));                 // rank first
+  assert.ok(c('9c') < c('9s') && c('9s') < c('9h') && c('9h') < c('9d')); // clubs < spades < hearts < diamonds
+  assert.ok(c('Ad') < c('2c'));                 // any 2 beats any ace
+});
+
+t('singles, pairs, triples', () => {
+  assert.equal(ev('9h').type, 'single');
+  assert.equal(ev('9h 9c').type, 'pair');
+  assert.equal(ev('9h 10c'), null);
+  assert.equal(ev('9h 9c 9d').type, 'triple');
+  assert.equal(ev('9h 9c 8d'), null);
+  assert.equal(ev('9h 9c 9d 9s'), null);          // four cards is never a play
+  assert.equal(ev('9h 9h'), null);                // duplicates
+  assert.ok(E.beats(ev('7s 7d'), ev('7c 7h')));   // pair with the diamond wins
+  assert.ok(!E.beats(ev('7c 7h'), ev('7s 7d')));
+  assert.ok(E.beats(ev('8c 8s'), ev('7h 7d')));
+  assert.ok(!E.beats(ev('8c 8s'), ev('7h')));     // sizes must match
+});
+
+t('five-card hands are recognised', () => {
+  assert.equal(ev('3c 4d 5h 6s 7c').type, 'straight');
+  assert.equal(ev('3c 4c 5c 6c 7c').type, 'straightflush');
+  assert.equal(ev('3c 9c 5c Jc 2c').type, 'flush');
+  assert.equal(ev('9c 9d 9h 4s 4c').type, 'fullhouse');
+  assert.equal(ev('9c 9d 9h 9s 4c').type, 'quads');
+  assert.equal(ev('3c 4d 5h 6s 8c'), null);
+  assert.equal(ev('9c 9d 4h 4s 5c'), null);       // two pair is not a hand
+});
+
+t('straights follow Pusoy order, no wrap-around', () => {
+  assert.equal(ev('Jc Qd Kh As 2c').type, 'straight');   // highest straight
+  assert.equal(ev('10c Jd Qh Ks Ac').type, 'straight');
+  assert.equal(ev('Ac 2d 3h 4s 5c'), null);              // no wrapping past the 2
+  assert.equal(ev('2d 3h 4s 5c 6c'), null);
+  assert.equal(ev('Qc Kd Ah 2s 3c'), null);
+  assert.ok(E.beats(ev('Jc Qd Kh As 2c'), ev('10c Jd Qh Ks Ad')));
+  assert.ok(E.beats(ev('3d 4c 5c 6c 7d'), ev('3c 4d 5h 6s 7h')));  // same top rank: suit of the top card
+});
+
+t('five-card ranking: straight < flush < full house < quads < straight flush', () => {
+  const st = ev('Jc Qd Kh As 2d'), fl = ev('3c 4c 5c 6c 8c'), fh = ev('3c 3d 3h 4s 4c'),
+        q = ev('3c 3d 3h 3s 4c'), sf = ev('3h 4h 5h 6h 7h');
+  assert.ok(E.beats(fl, st)); assert.ok(E.beats(fh, fl)); assert.ok(E.beats(q, fh)); assert.ok(E.beats(sf, q));
+  assert.ok(!E.beats(st, fl)); assert.ok(!E.beats(q, sf));
+  assert.ok(E.beats(ev('4c 4d 4h 3s 3c'), fh));                       // full house: by the triple
+  assert.ok(E.beats(ev('3d 5d 6d 7d 9d'), ev('3c 4c 5c 6c 9c')));      // flush: top card, then suit
+  assert.ok(E.beats(ev('3c 4c 5c 6c 10c'), ev('3d 5d 6d 7d 9d')));
+});
+
+t('check() explains refusals', () => {
+  const table = ev('9h 9c');
+  assert.equal(E.check(h('10c 10s'), table, false).ok, true);
+  assert.equal(E.check(h('8c 8s'), table, false).ok, false);
+  assert.equal(E.check(h('Ac'), table, false).ok, false);
+  assert.equal(E.check(h('4c 4s'), null, true).ok, false);            // opening play needs the 3 of clubs
+  assert.equal(E.check(h('3c 3s'), null, true).ok, true);
+  assert.equal(E.check(h('3c 4d 5h 6s 7c'), null, true).ok, true);
+});
+
+t('legalPlays matches brute force on random hands', () => {
+  const brute = (hand, table) => {
+    const out = new Set();
+    const rec = (i, pick) => {
+      if (pick.length && [1, 2, 3, 5].includes(pick.length)) {
+        const e = E.evaluate(pick);
+        if (e && (!table || (e.size === table.size && e.power > table.power))) out.add(e.cards.join(','));
+      }
+      if (pick.length === 5) return;
+      for (let j = i; j < hand.length; j++) rec(j + 1, pick.concat(hand[j]));
+    };
+    rec(0, []);
+    return out;
+  };
+  for (let k = 0; k < 60; k++) {
+    const hands = E.deal();
+    const hand = hands[0];
+    const tables = [null, E.evaluate([hands[1][3]]), E.generate(hands[1], 2)[0], E.generate(hands[1], 5)[0]];
+    for (const table of tables) {
+      if (table === undefined) continue;
+      const fast = new Set(E.legalPlays(hand, table, false).map((x) => x.cards.join(',')));
+      const slow = brute(hand, table);
+      assert.equal(fast.size, slow.size);
+      for (const key of slow) assert.ok(fast.has(key));
+    }
+  }
+});
+
+t('deal: 52 distinct cards, 13 each, nobody holds four 2s', () => {
+  for (let k = 0; k < 500; k++) {
+    const hands = E.deal();
+    assert.equal(new Set(hands.flat()).size, 52);
+    hands.forEach((x) => { assert.equal(x.length, 13); assert.ok(x.filter((id) => id >= 48).length < 4); });
+  }
+});
+
+t('table: opening play, pass lock, trick clear, scoring', () => {
+  const core = TableCore.create({ code: 'TEST', rounds: 2, turnSecs: 30 }, 0);
+  ['a', 'b', 'c', 'd'].forEach((p) => assert.ok(core.join(p, { name: p }, 0).seat >= 0));
+  assert.equal(core.join('e', { name: 'e' }, 0).error, 'full');
+  core.act('a', { t: 'start' }, 0);
+  const s = core.s;
+  const pid = (i) => s.seats[i].pid;
+  // rig the deal so the test is deterministic
+  s.hands = [h('3c 4c 5c 9d'), h('3s 6c 7c 8c Kd'), h('3h 6s 7s 8s Kh'), h('3d 6h 7h 8h Ks')];
+  s.turn = 0; s.mustOpen = true;
+  assert.ok(core.act(pid(1), { t: 'play', cards: h('3s') }, 1).error);            // not their turn
+  assert.ok(core.act(pid(0), { t: 'play', cards: h('4c') }, 1).error);            // must include 3 of clubs
+  assert.ok(core.act(pid(0), { t: 'pass' }, 1).error);                            // can't pass on the lead
+  assert.ok(core.act(pid(0), { t: 'play', cards: h('3c 2d') }, 1).error);         // card not in hand
+  assert.equal(core.act(pid(0), { t: 'play', cards: h('3c') }, 1).error, undefined);
+  assert.equal(s.turn, 1);
+  assert.ok(core.act(pid(1), { t: 'play', cards: h('6c 7c') }, 2).error);         // not a pair
+  assert.equal(core.act(pid(1), { t: 'pass' }, 2).error, undefined);
+  assert.equal(core.act(pid(2), { t: 'play', cards: h('3h') }, 3).error, undefined);
+  assert.equal(core.act(pid(3), { t: 'play', cards: h('3d') }, 4).error, undefined);
+  assert.equal(core.act(pid(0), { t: 'play', cards: h('9d') }, 5).error, undefined);
+  assert.equal(s.turn, 2);                                                        // seat 1 passed: skipped
+  assert.equal(core.act(pid(2), { t: 'play', cards: h('Kh') }, 6).error, undefined);
+  assert.equal(core.act(pid(3), { t: 'pass' }, 7).error, undefined);
+  assert.equal(core.act(pid(0), { t: 'pass' }, 8).error, undefined);
+  assert.equal(s.table, null);                                                    // trick cleared
+  assert.equal(s.turn, 2);                                                        // winner of the trick leads
+  assert.deepEqual(s.passed, [false, false, false, false]);
+  // seat 2 walks out
+  assert.equal(core.act(pid(2), { t: 'play', cards: h('6s') }, 9).error, undefined);
+  s.passed = [true, true, false, true]; s.turn = 2; s.table = null;
+  s.hands[2] = h('7s 8s');
+  assert.ok(core.act(pid(2), { t: 'play', cards: h('7s 8s') }, 10).error);        // not a pair
+  s.hands[2] = h('7s');
+  assert.equal(core.act(pid(2), { t: 'play', cards: h('7s') }, 10).error, undefined);
+  assert.equal(s.phase, 'roundEnd');
+  assert.equal(s.result.winner, 2);
+  assert.deepEqual(s.result.left, [2, 5, 0, 4]);
+  assert.deepEqual(s.result.delta, [-2, -5, 11, -4]);
+  assert.equal(s.scores.reduce((a, b) => a + b, 0), 0);                           // zero-sum
+  // round 2: the holder of the 3 of clubs opens again and must play it
+  core.tick(10 + 60000);
+  assert.equal(s.phase, 'playing'); assert.equal(s.round, 2);
+  assert.equal(s.hands[s.turn][0], 0); assert.equal(s.mustOpen, true);
+  const opener = s.turn, low = s.hands[opener].find((x) => x !== 0);
+  assert.ok(core.act(pid(opener), { t: 'play', cards: [low] }, 70000).error);          // not without the 3 of clubs
+  assert.equal(core.act(pid(opener), { t: 'play', cards: [0] }, 70000).error, undefined);
+});
+
+t('scoring multipliers: 10+ cards double, all 13 triple', () => {
+  const core = TableCore.create({ rounds: 1 }, 0);
+  core.join('a', {}, 0); core.act('a', { t: 'start' }, 0);
+  const s = core.s;
+  s.hands = [h('5c'), E.deal()[0], E.deal()[0].slice(0, 10), E.deal()[0].slice(0, 9)];
+  s.turn = 0; s.mustOpen = false; s.table = null;
+  core.act('a', { t: 'play', cards: h('5c') }, 1);
+  assert.deepEqual(s.result.delta, [39 + 20 + 9, -39, -20, -9]);
+  assert.equal(s.phase, 'matchEnd'); assert.equal(s.result.champ, 0);
+  assert.equal(s.outbox.length, 1); assert.equal(s.outbox[0].won, true);
+});
+
+t('view hides other hands', () => {
+  const core = TableCore.create({}, 0);
+  core.join('a', {}, 0); core.act('a', { t: 'start' }, 0);
+  const v = core.view(0, 0);
+  assert.equal(v.hand.length, 13);
+  assert.equal(JSON.stringify(v).includes('"hands"'), false);
+  assert.deepEqual(v.seats.map((x) => x.n), [13, 13, 13, 13]);
+});
+
+console.log(`rules: ${n} groups of checks passed`);

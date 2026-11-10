@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2F6D70">
+<meta name="description" content="Pusoy Dos: dump your hand before anyone else. Play solo against bots or jump into a live table.">
+<title>Pusoy Dos</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232F6D70'/%3E%3Crect x='16' y='9' width='32' height='46' rx='5' fill='%23F7F1E3' stroke='%23131D28' stroke-width='3'/%3E%3Cpath d='M32 18l11 14-11 14-11-14z' fill='%23D8473E'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="bg" id="bg" aria-hidden="true"></div>
+
+<!-- suit shapes, drawn once and reused on every card -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="suit0" viewBox="0 0 24 24"><circle cx="12" cy="7.3" r="4.6"/><circle cx="6.6" cy="14" r="4.6"/><circle cx="17.4" cy="14" r="4.6"/><path d="M12 11.5c.2 5.2-1 8.300-3.400 10.500h6.800c-2.400-2.200-3.600-5.300-3.400-10.500z"/><circle cx="12" cy="12.300" r="2.600"/></symbol>
+  <symbol id="suit1" viewBox="0 0 24 24"><path d="M12 1.800C9.500 6 3 9.600 3 14.600a4.700 4.700 0 0 0 8.100 3.200c-.2 1.800-1.100 3.200-2.700 4.400h7.200c-1.600-1.200-2.500-2.600-2.700-4.400A4.700 4.700 0 0 0 21 14.600C21 9.600 14.500 6 12 1.800z"/></symbol>
+  <symbol id="suit2" viewBox="0 0 24 24"><path d="M12 21.500C9.200 17.600 2.500 14.200 2.500 8.400a5.100 5.100 0 0 1 9.500-2.600 5.100 5.100 0 0 1 9.500 2.600c0 5.800-6.700 9.200-9.500 13.100z"/></symbol>
+  <symbol id="suit3" viewBox="0 0 24 24"><path d="M12 1.500c2.200 4 4.700 7.300 8 10.500-3.300 3.200-5.800 6.500-8 10.500-2.200-4-4.700-7.300-8-10.500 3.300-3.200 5.800-6.500 8-10.500z"/></symbol>
+</svg>
+
+<!-- ============================ HOME ============================ -->
+<main id="home" class="screen">
+  <div class="home-wrap">
+    <header class="hero">
+      <h1 class="logo" id="logo" aria-label="Pusoy Dos"></h1>
+      <p class="tagline">Dump your whole hand before anyone else does. The 3 of clubs opens. The 2 of diamonds beats everything.</p>
+      <div class="hero-cards" id="hero-cards" aria-hidden="true"></div>
+    </header>
+
+    <section class="you" aria-label="Your player">
+      <label class="field">
+        <span>Player name</span>
+        <input id="name" type="text" maxlength="16" autocomplete="nickname" placeholder="Player 1" spellcheck="false">
+      </label>
+      <div class="swatches" id="swatches" role="radiogroup" aria-label="Your color"></div>
+    </section>
+
+    <section class="solo">
+      <button class="btn btn-play btn-big" id="btn-solo">Play solo</button>
+      <p class="note"><span id="solo-note">3 bots, 5 rounds, no clock.</span>
+        <button class="link" id="btn-solo-opts">Change</button></p>
+    </section>
+
+    <section class="live panel" aria-labelledby="live-title">
+      <div class="live-head">
+        <h2 id="live-title">Live tables</h2>
+        <span class="online" id="online"></span>
+      </div>
+      <div class="tables" id="tables"></div>
+      <div class="live-actions">
+        <button class="btn btn-hint" id="btn-quick">Quick join</button>
+        <button class="btn" id="btn-new">New table</button>
+        <button class="btn" id="btn-code">Enter code</button>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <button class="pill" id="btn-rules">How to play</button>
+      <button class="pill" id="btn-board">Hall of fame</button>
+      <button class="pill" id="btn-sound-home">Sound on</button>
+    </footer>
+  </div>
+</main>
+
+<!-- ============================ TABLE ============================ -->
+<div id="game" class="screen" hidden>
+  <header class="hud">
+    <button class="icon-btn" id="btn-leave" aria-label="Leave table">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"/></svg>
+    </button>
+    <div class="hud-title">
+      <strong id="t-round">Round 1</strong>
+      <span id="t-name">Table</span>
+    </div>
+    <button class="chip" id="btn-invite" hidden></button>
+    <button class="icon-btn" id="btn-seen" aria-label="Cards played so far" title="Cards played so far">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="11" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2.200"/><path d="M9 3h10a2 2 0 0 1 2 2v13" fill="none" stroke="currentColor" stroke-width="2.200"/></svg>
+    </button>
+    <button class="icon-btn" id="btn-sound" aria-label="Sound">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.500v5h3.500L12 18.500v-13L7.500 9.500z" fill="currentColor"/><path class="waves" d="M15.500 8.500a5 5 0 0 1 0 7M18 6a8.500 8.500 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="square"/><path class="mute" d="M15.500 9.500l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="square"/></svg>
+    </button>
+    <button class="icon-btn" id="btn-help" aria-label="How to play">?</button>
+  </header>
+
+  <div class="arena">
+    <div class="playfield" id="field">
+      <div class="seat" data-pos="1" id="seat1"></div>
+      <div class="seat" data-pos="2" id="seat2"></div>
+      <div class="seat" data-pos="3" id="seat3"></div>
+      <div class="pile" id="pile" aria-live="polite"></div>
+      <div class="pile-label" id="pile-label"></div>
+      <div class="banner" id="banner" aria-hidden="true"></div>
+      <div class="waiting" id="waiting" hidden></div>
+    </div>
+  </div>
+
+  <footer class="dock">
+    <div class="timebar" id="timebar"><i></i></div>
+    <div class="me-row">
+      <div class="seat me" data-pos="0" id="seat0"></div>
+      <p class="status" id="status" aria-live="polite"></p>
+      <div class="tools">
+        <button class="tool" id="btn-sort" title="Sort your cards (S)">Rank</button>
+        <button class="tool" id="btn-chat" hidden>Chat</button>
+      </div>
+    </div>
+    <div class="combos" id="combos" aria-label="Hands you can play"></div>
+    <div class="hand" id="hand" role="group" aria-label="Your cards"></div>
+    <div class="actions">
+      <button class="btn btn-pass" id="btn-pass" disabled>Pass</button>
+      <button class="btn btn-hint" id="btn-hint" disabled>Hint</button>
+      <button class="btn btn-play" id="btn-play" disabled>Play</button>
+    </div>
+  </footer>
+
+  <div class="chat-tray" id="chat-tray" hidden>
+    <div class="quick emoji" id="quick-emoji"></div>
+    <div class="quick" id="quick"></div>
+    <form id="chat-form" autocomplete="off">
+      <input id="chat-text" type="text" maxlength="80" placeholder="Say something" aria-label="Message">
+      <button class="btn btn-hint" type="submit">Send</button>
+    </form>
+  </div>
+
+  <!-- end of round -->
+  <div class="overlay" id="results-wrap" hidden>
+    <div class="results" id="results" role="dialog" aria-modal="true" aria-label="Round results"></div>
+  </div>
+</div>
+
+<div class="flash" id="flash" aria-hidden="true"></div>
+<canvas id="fx" aria-hidden="true"></canvas>
+<div class="crt" aria-hidden="true"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- ============================ DIALOGS ============================ -->
+<dialog id="dlg-new" class="sheet">
+  <form method="dialog" id="form-new">
+    <h2 id="new-title">New table</h2>
+    <p class="muted" id="new-note" hidden>You host this table from your own browser. Keep the tab open while people play; if you leave, the next player takes over.</p>
+    <label class="field" id="new-name-field">
+      <span>Table name</span>
+      <input id="new-name" type="text" maxlength="28" placeholder="Leave blank for a random one">
+    </label>
+    <fieldset class="seg" id="new-pub-field">
+      <legend>Who can join</legend>
+      <label><input type="radio" name="pub" value="1" checked><span>Anyone<small>Shows in live tables</small></span></label>
+      <label><input type="radio" name="pub" value="0"><span>Invite only<small>Share the link or code</small></span></label>
+    </fieldset>
+    <fieldset class="seg">
+      <legend>Rounds</legend>
+      <label><input type="radio" name="rounds" value="3"><span>3</span></label>
+      <label><input type="radio" name="rounds" value="5" checked><span>5</span></label>
+      <label><input type="radio" name="rounds" value="10"><span>10</span></label>
+    </fieldset>
+    <fieldset class="seg" id="new-clock-field">
+      <legend>Seconds per turn</legend>
+      <label><input type="radio" name="secs" value="15"><span>15</span></label>
+      <label><input type="radio" name="secs" value="30" checked><span>30</span></label>
+      <label><input type="radio" name="secs" value="60"><span>60</span></label>
+    </fieldset>
+    <label class="check">
+      <input type="checkbox" id="new-lock" checked>
+      <span>Passing sits you out until the table clears<small>The standard rule. Untick to let players jump back in.</small></span>
+    </label>
+    <div class="sheet-actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn btn-play" value="ok" id="new-ok">Open table</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-code" class="sheet sheet-small">
+  <form method="dialog" id="form-code">
+    <h2>Enter table code</h2>
+    <input id="code" class="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" aria-label="Four-letter table code">
+    <div class="sheet-actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn btn-play" value="ok">Join table</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-leave" class="sheet sheet-small">
+  <form method="dialog">
+    <h2>Leave the table?</h2>
+    <p id="leave-text">A bot takes over your seat and your cards.</p>
+    <div class="sheet-actions">
+      <button class="btn" value="cancel">Stay</button>
+      <button class="btn btn-pass" value="ok">Leave table</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-board" class="sheet">
+  <form method="dialog">
+    <h2>Hall of fame</h2>
+    <p class="muted">Matches won at live tables with at least two people.</p>
+    <div id="board" class="board"></div>
+    <div class="sheet-actions"><button class="btn btn-play" value="ok">Close</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-seen" class="sheet sheet-seen">
+  <form method="dialog">
+    <h2>Cards played</h2>
+    <p class="muted" id="seen-note"></p>
+    <div id="seen" class="seen"></div>
+    <div class="sheet-actions"><button class="btn btn-play" value="ok">Close</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-rules" class="sheet sheet-rules">
+  <form method="dialog">
+    <h2>How to play</h2>
+    <div class="rules" id="rules"></div>
+    <div class="sheet-actions"><button class="btn btn-play" value="ok">Got it</button></div>
+  </form>
+</dialog>
+
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="bot.js"></script>
+<script src="table.js"></script>
+<script src="vendor/trystero-nostr.js"></script>
+<script src="p2p.js"></script>
+<script src="net.js"></script>
+<script src="fx.js"></script>
+<script src="client.js"></script>
+</body>
+</html>

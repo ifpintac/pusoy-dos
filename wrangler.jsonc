@@ -1,0 +1,17 @@
+{
+  // Cloudflare Workers config. `npm run dev` runs it locally, `npm run deploy` publishes it.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pusoy-dos",
+  "main": "server.js",
+  "compatibility_date": "2025-10-01",
+  // The game itself: plain static files.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // Live tables and the lobby. SQLite-backed Durable Objects run on the free plan.
+  "durable_objects": {
+    "bindings": [
+      { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "TABLE", "class_name": "Table" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby", "Table"] }]
+}

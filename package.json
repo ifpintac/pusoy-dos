@@ -1,0 +1,18 @@
+{
+  "name": "pusoy-dos",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Pusoy Dos \u2014 the Filipino card game, in the browser, with live tables.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/rules.test.mjs && node test/simulate.mjs 300 && node test/p2p.test.mjs",
+    "test:online": "node test/online.test.mjs",
+    "relay": "node test/tools/local-relay.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.159.0",
+    "ws": "^8"
+  }
+}

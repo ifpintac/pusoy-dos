@@ -271,6 +271,47 @@ t('ready-up: alone you just deal; with company everyone readies, or a timer runs
   assert.equal(left.s.phase, 'playing');                                     // the one holding things up left
 });
 
+t('match awards: counted as the match is played, unique winners only, spread around', () => {
+  const IDS = { dos: 'twos', heavy: 'big', streak: 'best', sprint: 'quick', tricks: 'tricks', combo: 'fives', bag: 'stuck', bench: 'passes' };
+  let seenIds = new Set(), total = 0;
+  for (let game = 0; game < 40; game++) {
+    const core = TableCore.create({ rounds: 3, botMs: [1, 2], emotes: false }, 0);
+    core.join('a', { name: 'a' }, 0); core.act('a', { t: 'start' }, 0);
+    let plays = [0, 0, 0, 0], twos = [0, 0, 0, 0], passes = [0, 0, 0, 0], tricks = [0, 0, 0, 0], g = 0;
+    while (core.s.phase !== 'matchEnd' && g++ < 3000) {
+      if (core.s.phase === 'roundEnd') { core.drain(); core.nextRound(0); continue; }
+      core.autoMove(core.s.turn, true, 0);
+      for (const e of core.drain()) {
+        if (e.k === 'play') { plays[e.seat]++; twos[e.seat] += e.cards.filter((x) => x >= 48).length; }
+        if (e.k === 'pass') passes[e.seat]++;
+        if (e.k === 'clear') tricks[e.seat]++;
+      }
+    }
+    assert.equal(core.s.phase, 'matchEnd');
+    const st = core.s.stats, aw = core.s.result.awards;
+    assert.deepEqual(st.map((x) => x.twos), twos); assert.deepEqual(st.map((x) => x.passes), passes); assert.deepEqual(st.map((x) => x.tricks), tricks);
+    assert.ok(Array.isArray(aw) && aw.length <= 4);
+    assert.equal(new Set(aw.map((x) => x.id)).size, aw.length);                 // no award twice
+    for (let i = 0; i < 4; i++) assert.ok(aw.filter((x) => x.seat === i).length <= 2);
+    for (const x of aw) {
+      const key = IDS[x.id]; assert.ok(key, x.id);
+      assert.equal(x.n, st[x.seat][key]);
+      const others = st.filter((_, i) => i !== x.seat).map((o) => o[key]).filter(Boolean);
+      assert.ok(others.every((o) => (x.id === 'sprint' ? o > x.n : o < x.n)), `${x.id} is not a clear lead`);
+      seenIds.add(x.id); total++;
+    }
+    assert.deepEqual(core.view(0, 0).result.awards, aw);                        // everyone is shown the same ones
+    core.act('a', { t: 'start' }, 0);                                           // a new match starts counting from nothing
+    assert.ok(core.s.stats.every((x) => x.twos === 0 && x.tricks === 0 && x.quick === 0 && x.stuck === 0));
+  }
+  assert.ok(total >= 80 && seenIds.size >= 6, `only ${total} awards of ${seenIds.size} kinds in 40 matches`);
+  // a table handed over by an older host has no tallies: it carries on, and simply has fewer awards
+  const old = TableCore.create({ rounds: 1, botMs: [1, 2], emotes: false }, 0);
+  old.join('a', { name: 'a' }, 0); old.act('a', { t: 'start' }, 0); delete old.s.stats;
+  let g = 0; while (old.s.phase === 'playing' && g++ < 600) old.autoMove(old.s.turn, true, 0);
+  assert.equal(old.s.phase, 'matchEnd'); assert.ok(Array.isArray(old.s.result.awards));
+});
+
 t('rematch: scores start over and a winning streak is counted', () => {
   const core = TableCore.create({ rounds: 1, readyMs: 5000, botMs: [1, 2], emotes: false }, 0);
   ['a', 'b'].forEach((p) => core.join(p, { name: p }, 0));

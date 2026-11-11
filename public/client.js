@@ -116,6 +116,27 @@
       [523, 659, 784, 1047, 1319, 1568, 2093].forEach(function (f, i) { note(f, 0.1, 'square', 0.055, 0.08 + i * 0.055); });
       note(1047, 0.5, 'square', 0.05, 0.5); note(1568, 0.5, 'square', 0.045, 0.5); note(2093, 0.55, 'triangle', 0.08, 0.5);
     },
+    // one sound per kind of hand, timed to how its cards land
+    clap: function () { note(523, 0.05, 'square', 0.05); note(784, 0.08, 'square', 0.05, 0.05); },
+    run: function (n) { for (var i = 0; i < n; i++) note([523, 587, 659, 784, 880, 1047][i] || 1047, 0.08, 'square', 0.05, i * 0.07); },
+    shimmer: function () { [1319, 1568, 1760, 2093, 1760, 2093, 2637].forEach(function (f, i) { note(f, 0.07, 'triangle', 0.07, i * 0.04); }); },
+    house: function () { note(196, 0.3, 'sine', 0.3, 0, 60); [392, 494, 587].forEach(function (f) { note(f, 0.32, 'square', 0.04, 0.02); }); },
+    boom: function () { note(90, 0.7, 'sine', 0.45, 0, 28); noise(0.5, 0.5, 0, 500); noise(0.15, 0.35, 0, 3000); [262, 330, 392, 523].forEach(function (f, i) { note(f, 0.4, 'sawtooth', 0.03, 0.1 + i * 0.03); }); },
+    royal: function () {
+      [523, 659, 784, 1047, 1319, 1568, 2093].forEach(function (f, i) { note(f, 0.12, 'square', 0.05, i * 0.06); });
+      [523, 784, 1047, 1568].forEach(function (f) { note(f, 0.9, 'triangle', 0.07, 0.5); });
+      noise(0.6, 0.12, 0.45, 6000);
+    },
+    // the rare ones
+    fanfare: function () {
+      [[392, 0], [523, 0.13], [659, 0.26], [784, 0.39]].forEach(function (n) { note(n[0], 0.12, 'square', 0.06, n[1]); note(n[0] / 2, 0.12, 'sawtooth', 0.03, n[1]); });
+      [523, 659, 784, 1047].forEach(function (f) { note(f, 1.1, 'square', 0.04, 0.54); note(f * 2, 1.1, 'triangle', 0.05, 0.54); });
+      [2093, 2637, 3136, 2637, 3136, 4186].forEach(function (f, i) { note(f, 0.06, 'triangle', 0.05, 0.7 + i * 0.09); });
+    },
+    slash: function () { noise(0.16, 0.35, 0, 5200); note(1760, 0.2, 'triangle', 0.1, 0.05, 520); },
+    clash: function () { noise(0.05, 0.4, 0, 6000); note(2349, 0.3, 'triangle', 0.1); note(3136, 0.34, 'triangle', 0.08, 0.02); noise(0.05, 0.3, 0.12, 6000); note(2794, 0.3, 'triangle', 0.08, 0.12); },
+    sneak: function () { [392, 466, 392, 523, 784].forEach(function (f, i) { note(f, 0.05, 'triangle', 0.14, i * 0.16); }); },
+    fire: function (n) { noise(0.5, 0.18, 0, 1800); for (var i = 0; i < Math.min(6, n + 1); i++) note([392, 494, 587, 784, 988, 1175][i], 0.09, 'sawtooth', 0.035, i * 0.06); },
     react: function () { note(880, 0.05, 'square', 0.04); note(1320, 0.08, 'square', 0.04, 0.05); },
     splat: function () { noise(0.12, 0.3, 0, 900); note(150, 0.12, 'sine', 0.2, 0, 60); },
     ready: function () { note(659, 0.07, 'triangle', 0.1); note(880, 0.1, 'triangle', 0.1, 0.07); },
@@ -147,7 +168,7 @@
   }
   function signed(n) { return n > 0 ? '+' + n : n < 0 ? '−' + Math.abs(n) : '0'; }
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-  function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+  function plural(n, w, many) { return n + ' ' + (n === 1 ? w : many || w + 's'); }
   function color(av) { return COLORS[(av | 0) % 6]; }
 
   function toast(text, ms) {
@@ -578,7 +599,15 @@
         var twos = e.cards.filter(function (id) { return id >= 48; }).length, big = e.cards.indexOf(51) >= 0;
         var power = powerOf(e), tier = E.TIER[e.type] || 0;
         var out = e.left === 0;                    // the play that empties a hand and ends the round
-        var land = FX.isCalm() ? 0 : big || out ? 780 : 300 + e.cards.length * 30;
+        var rare = rareOf(e, lastPlay); lastPlay = e;
+        // every kind of hand has its own way of arriving (see flyIn), so each lands at its own moment
+        var land = FX.isCalm() ? 0 : big || out ? 780 : (LAND[e.type] || 330);
+        var fresh = pileEl.lastElementChild;      // the cards that were just put down
+        if (!FX.isCalm() && !big && !out) {
+          if (e.type === 'triple') [300, 390].forEach(function (t) { setTimeout(function () { sfx.slam(0); FX.kickClass(pileEl, 'thud'); }, t); });
+          if (e.type === 'fullhouse') setTimeout(function () { if (view) { sfx.slam(1); FX.kickClass(pileEl, 'thud'); var p = pileCenter(); FX.ring(p.x, p.y, col, 1); } }, 340);
+          if (e.type === 'straight' || e.type === 'straightflush') sfx.run(5);
+        }
         if ((big || out) && !FX.isCalm()) {        // it hangs in the air first: dim the table, wind up
           if (big) sfx.charge(); else sfx.windup();
           fieldEl.classList.add('spot');
@@ -605,9 +634,9 @@
           } else {
             FX.shake(gameEl, power);
             if (twos) dos(c, twos, e.cards.length < 5);
-            if (tier) { banner(SHOUT[e.type], 't' + tier); sfx.combo(tier); }
-            if (tier >= 4) FX.flash($('flash'), col);
+            if (rare !== 'royal') comboFx(e, c, col, fresh);
           }
+          if (rare && (!out || rare === 'duel')) rareFx(rare, e, c, col, fresh, big || out);
           if (out) finisher(e.seat, c, col, big);
           if (e.left === 1 && view.phase === 'playing') {
             var sc = FX.center(seatEls[pos].el);
@@ -622,9 +651,14 @@
         seatEls[pos].body.classList.add('won');
         c = FX.center(seatEls[pos].el);
         FX.burst(c.x, c.y, { colors: [seatColor(e.seat), '#F7F1E3'], count: 16, speed: 240, size: 6 });
-        FX.floatText(c.x, c.y - (pos === 0 ? 34 : -34), pos === 0 ? 'Your lead!' : 'Takes it', seatColor(e.seat));
+        streak = streak.seat === e.seat ? { seat: e.seat, n: streak.n + 1 } : { seat: e.seat, n: 1 };
+        var sneaky = lastPlay && lastPlay.cards.length < 5 && lastPlay.cards[lastPlay.cards.length - 1] < 4;   // nobody beat a 3
+        lastPlay = null;
+        if (streak.n >= 3) onFire(e.seat, pos, c, streak.n);
+        else FX.floatText(c.x, c.y - (pos === 0 ? 34 : -34), pos === 0 ? 'Your lead!' : 'Takes it', seatColor(e.seat));
+        if (sneaky) { banner(e.seat === view.you ? 'Sneaky three!' : 'Sneaky!', 't1 sneak'); sfx.sneak(); FX.kickClass(seatEls[pos].body, 'nudge'); }
         break;
-      case 'deal': sfx.deal(); dealFx(); break;
+      case 'deal': sfx.deal(); dealFx(); streak = { seat: -1, n: 0 }; lastPlay = null; break;
       case 'chat':
         if (e.seat !== view.you && (me.muteChat || muted[e.seat])) break;
         say(posOf(e.seat), e.text);
@@ -654,6 +688,166 @@
         }, FX.isCalm() ? 0 : after);
         break;
     }
+  }
+
+  /* ---------- a signature for every kind of hand ---------- */
+
+  var LAND = { single: 330, pair: 340, triple: 480, straight: 640, flush: 540, fullhouse: 640, quads: 450, straightflush: 700 };
+  var SUIT_INK = ['#F7F1E3', '#F7F1E3', '#FF8F86', '#FF8F86'];
+
+  function hop(cards, height, gap) {        // a little wave through the cards, left to right
+    cards.forEach(function (card, i) {
+      if (card.animate) card.animate([{ translate: '0 0' }, { translate: '0 ' + -height + 'px' }, { translate: '0 0' }], { duration: 260, delay: i * gap, easing: 'ease-out' });
+    });
+  }
+  /* What happens the moment the cards land. Flight is in flyIn; this is the impact. */
+  function comboFx(e, c, col, node) {
+    var f = fieldEl.getBoundingClientRect(), x = c.x - f.left, y = c.y - f.top;
+    var cards = node ? [].slice.call(node.children) : [], calm = FX.isCalm();
+    var top = e.cards[e.cards.length - 1], suit = top & 3, ink = SUIT_INK[suit], glyph = E.SUITS[suit];
+    var w = node ? node.getBoundingClientRect().width : 200, cw = cards[0] ? cards[0].getBoundingClientRect().height : 80;
+    switch (e.type) {
+      case 'pair':
+        sfx.clap();
+        break;
+      case 'triple':
+        [-1, 0, 1].forEach(function (k) { FX.burst(c.x + k * 26, c.y + (k ? 14 : -18), { colors: [col, '#F7F1E3'], count: 5, speed: 150, size: 5, life: 0.4 }); });
+        break;
+      case 'straight':                       // a run: the cards ripple in order and a streak shoots under them
+        banner(SHOUT.straight, 't1 run');
+        if (!calm) hop(cards, 14, 60);
+        FX.shape(fieldEl, 'fx-sweep', x, y, col, 600, { '--w': Math.round(w * 1.25) + 'px', '--h': Math.round(cw * 0.58) + 'px' });
+        FX.burst(c.x + w * 0.55, c.y + cw * 0.5, { colors: [col, '#F7F1E3'], count: 12, speed: 260, size: 5, life: 0.5 });
+        break;
+      case 'flush':                          // one suit: the cards swell together and the suit rains upward
+        banner(SHOUT.flush, 't2 bloom'); sfx.shimmer();
+        if (!calm) cards.forEach(function (card) { if (card.animate) card.animate([{ scale: '1' }, { scale: '1.16' }, { scale: '1' }], { duration: 420, easing: 'cubic-bezier(.3,1.6,.5,1)' }); });
+        FX.glyphs(c.x, c.y, glyph, ink, 16);
+        FX.ring(c.x, c.y, ink, 2);
+        break;
+      case 'fullhouse':                      // three and two: a second, heavier beat and a tumble of bricks
+        banner(SHOUT.fullhouse, 't3 drop'); sfx.house();
+        FX.ring(c.x, c.y, '#8EDDB4', 3);
+        FX.burst(c.x, c.y - cw * 0.3, { colors: ['#8EDDB4', col, '#F7F1E3'], count: 22, speed: 300, size: 10, life: 0.9, gravity: 1500, up: 220 });
+        break;
+      case 'quads':                          // the bomb
+        banner(SHOUT.quads, 't4 quake'); sfx.boom(); buzz([30, 30, 90]);
+        FX.shape(fieldEl, 'fx-boom', x, y, '#F5A742', 700);
+        FX.flash($('flash'), '#F5A742');
+        FX.shake(gameEl, 3);
+        FX.ring(c.x, c.y, '#F5A742', 3); setTimeout(function () { FX.ring(c.x, c.y, '#F7F1E3', 3); }, 120);
+        FX.burst(c.x, c.y, { colors: ['#F5A742', '#EF6257', '#F7F1E3'], count: 60, speed: 720, size: 9, life: 1, gravity: 300 });
+        break;
+      case 'straightflush':                  // the rarest hand gets everything, in its suit's colour
+        banner(SHOUT.straightflush, 't5 royal long'); sfx.royal(); buzz([30, 30, 30, 30, 140]);
+        FX.shape(fieldEl, 'fx-beam', x, y, ink, 1200);
+        FX.rays(fieldEl, x, y, ink);
+        FX.flash($('flash'), ink);
+        FX.shake(gameEl, 2);
+        if (!calm) hop(cards, 20, 70);
+        FX.glyphs(c.x, c.y, glyph, ink, 26, { speed: 680, spread: 2.2 });
+        FX.ring(c.x, c.y, ink, 3); setTimeout(function () { FX.ring(c.x, c.y, '#F7F1E3', 3); }, 140);
+        break;
+    }
+  }
+
+  /* ---------- rare moves ----------
+   * Things that happen once in a long while get a shout and a shape of their own:
+   *   royal    a straight flush that tops out at an ace or a 2
+   *   dosbomb  four 2s
+   *   counter  four of a kind or a straight flush beaten by anything
+   *   trump    a five-card hand beaten by a better kind of hand (a flush over a straight, say)
+   *   duel     a 2 beaten by a bigger 2
+   * plus two that are spotted when a trick is swept: a 3 that nobody beat, and three tricks in a row. */
+  var lastPlay = null, streak = { seat: -1, n: 0 };
+
+  function rareOf(e, prev) {
+    var top = e.cards[e.cards.length - 1], tier = E.TIER[e.type] || 0, was = prev ? E.TIER[prev.type] || 0 : 0;
+    if (e.type === 'straightflush' && top >= 44) return 'royal';
+    if (e.type === 'quads' && e.cards.filter(function (id) { return id >= 48; }).length === 4) return 'dosbomb';
+    if (was >= 4) return 'counter';                    // somebody answered a bomb
+    if (was && tier > was) return 'trump';
+    if (prev && prev.cards.length < 5 && prev.cards[prev.cards.length - 1] >= 48) return 'duel';
+    return '';
+  }
+
+  /* Knock the cards that were just beaten off their spot. */
+  function scatter(node, how) {
+    if (!node || !node.animate || FX.isCalm() || node.classList.contains('gone')) return;
+    var kids = [].slice.call(node.children), mid = (kids.length - 1) / 2;
+    kids.forEach(function (card, i) {
+      var k = i - mid, to = how === 'fall'
+        ? { translate: (k * 10 - 16) + 'px 16px', rotate: (-24 + k * 8) + 'deg', opacity: 0.45 }
+        : { translate: (k * 46 + (k < 0 ? -30 : 30)) + 'px ' + (-70 - Math.abs(k) * 14) + 'px', rotate: (k * 38 + (k < 0 ? -40 : 40)) + 'deg', opacity: 0 };
+      card.animate([{ translate: '0 0', rotate: '0deg', opacity: 1 }, to], { duration: how === 'fall' ? 420 : 520, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'forwards' });
+    });
+  }
+
+  function rareFx(kind, e, c, col, node, quiet) {
+    var f = fieldEl.getBoundingClientRect(), x = c.x - f.left, y = c.y - f.top, calm = FX.isCalm();
+    var cards = node ? [].slice.call(node.children) : [], beaten = node ? node.previousElementSibling : null;
+    var cw = cards[0] ? cards[0].getBoundingClientRect().height : 80, GOLD = '#F5A742';
+    switch (kind) {
+      case 'royal':                          // a crown comes down on the cards, the table turns gold
+        banner('Royal flush!', 'gold'); sfx.fanfare(); buzz([40, 40, 40, 40, 40, 40, 200]);
+        FX.shape(fieldEl, 'fx-crown', x, y - cw * 0.15, GOLD, 2300, null, '♛');
+        FX.shape(fieldEl, 'fx-beam', x - 74, y, GOLD, 1200); FX.shape(fieldEl, 'fx-beam', x + 74, y, GOLD, 1200);
+        FX.rays(fieldEl, x, y, GOLD);
+        FX.flash($('flash'), GOLD);
+        FX.shake(gameEl, 3);
+        FX.kickClass(fieldEl, 'punch');
+        if (!calm) hop(cards, 26, 80);
+        [0, 1, 2, 3].forEach(function (s) { setTimeout(function () { if (view) FX.glyphs(c.x, c.y, E.SUITS[s], s === (e.cards[0] & 3) ? GOLD : '#F7F1E3', 9, { speed: 700, spread: 2.4 }); }, s * 130); });
+        setTimeout(function () { if (view) FX.confetti([GOLD, '#FFD08A', '#F7F1E3'], 110); }, 420);
+        FX.ring(c.x, c.y, GOLD, 3); setTimeout(function () { FX.ring(c.x, c.y, '#F7F1E3', 3); }, 150); setTimeout(function () { FX.ring(c.x, c.y, GOLD, 3); }, 300);
+        break;
+      case 'dosbomb':                        // four 2s: three blasts, and a suit thrown to each corner
+        banner('Dos bomb!', 'big quake long'); buzz([40, 30, 40, 30, 40, 30, 160]);
+        [0, 170, 340].forEach(function (t, i) {
+          setTimeout(function () {
+            if (!view) return;
+            FX.shape(fieldEl, 'fx-wave', x, y, [GOLD, '#EF6257', '#F7F1E3'][i], 820);
+            FX.ring(c.x, c.y, [GOLD, '#EF6257', '#F7F1E3'][i], 3);
+            if (i) { sfx.slam(3); FX.shake(gameEl, 3); }
+          }, t);
+        });
+        FX.kickClass(fieldEl, 'punch');
+        [0, 1, 2, 3].forEach(function (s) { FX.glyphs(c.x, c.y, E.SUITS[s], SUIT_INK[s] === '#F7F1E3' ? '#F7F1E3' : GOLD, 7, { angle: -2.356 + s * 1.5708, speed: 760, spread: 0.5 }); });
+        break;
+      case 'counter':
+      case 'trump':                          // a better kind of hand: the old one is cut down and thrown off the table
+        if (!quiet) banner(kind === 'counter' ? 'Counter bomb!' : 'Trumped!', 'hot slash');
+        sfx.slash(); buzz([15, 20, 60]);
+        FX.shape(fieldEl, 'fx-slash', x, y + cw * 0.4, '#FF8F86', 460, { '--w': '330px' });
+        scatter(beaten, 'fly');
+        FX.burst(c.x, c.y + cw * 0.4, { colors: ['#FF8F86', '#F7F1E3'], count: 22, speed: 520, size: 6, life: 0.6 });
+        if (kind === 'counter') {
+          setTimeout(function () { if (view) { FX.shape(fieldEl, 'fx-wave', x, y, '#EF6257', 820); FX.shake(gameEl, 3); sfx.slam(3); } }, 200);
+          FX.flash($('flash'), '#EF6257');
+        }
+        break;
+      case 'duel':                           // 2 against 2: blades cross, the smaller one drops
+        if (!quiet) banner('Out-dosed!', 'dos clash');
+        sfx.clash(); buzz([15, 30, 15, 30, 50]);
+        FX.shape(fieldEl, 'fx-slash', x, y + cw * 0.4, GOLD, 460, { '--r': '-34deg', '--w': '240px' });
+        setTimeout(function () { if (view) FX.shape(fieldEl, 'fx-slash', x, y + cw * 0.4, '#F7F1E3', 460, { '--r': '-146deg', '--w': '240px' }); }, 90);
+        scatter(beaten, 'fall');
+        FX.burst(c.x, c.y + cw * 0.4, { colors: ['#F7F1E3', '#FFD08A'], count: 26, speed: 620, size: 4, life: 0.45, gravity: 900 });
+        break;
+    }
+  }
+
+  /* Three tricks in a row and counting: the plate catches fire. */
+  function onFire(seat, pos, c, n) {
+    var text = n === 3 ? 'Hat-trick!' : n === 4 ? 'On fire!' : 'Unstoppable!';
+    FX.floatText(c.x, c.y - (pos === 0 ? 40 : -40), text + (n > 3 ? ' ×' + n : ''), '#F5A742', true);
+    sfx.fire(n); if (seat === view.you) buzz([20, 30, 20, 30, 60]);
+    FX.kickClass(seatEls[pos].body, 'onfire');
+    [0, 160, 320, 480].forEach(function (t) {
+      setTimeout(function () {
+        if (view) FX.burst(c.x + (Math.random() - 0.5) * 40, c.y + 8, { colors: ['#F5A742', '#EF6257', '#FFD08A'], count: 9 + n, speed: 110, size: 6, life: 0.9, gravity: -520, up: 40 });
+      }, t);
+    });
   }
 
   /* ---------- the finishing move: the play that empties a hand ---------- */
@@ -701,7 +895,8 @@
       var lost = -res.delta[seatAt(pos)];
       if (pos === winPos || !(lost > 0)) return;
       var at = FX.center(s.el);
-      setTimeout(function () { if (view) FX.floatText(at.x, at.y + (pos === 2 ? 34 : -30), '\u2212' + lost, '#FF8F86'); }, 260 + pos * 70);
+      var shut = res.left[seatAt(pos)] === 13;       // never got a card down
+      setTimeout(function () { if (view) FX.floatText(at.x, at.y + (pos === 2 ? 34 : -30), (shut ? 'Shut out! ' : '') + '\u2212' + lost, '#FF8F86'); }, 260 + pos * 70);
     });
   }
 
@@ -1076,12 +1271,69 @@
         ], { duration: 840, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'backwards' }).onfinish = function () { card.style.zIndex = ''; };
         return;
       }
-      card.animate([
-        { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + sc + ') rotate(' + (mine ? 0 : -30) + 'deg)', opacity: mine ? 1 : 0.3, offset: 0 },
-        { transform: 'translate(0,-14px) scale(1.22) rotate(4deg)', opacity: 1, offset: 0.72 },
-        { transform: 'translate(0,3px) scale(.94)', offset: 0.88 },
-        { transform: 'none', opacity: 1, offset: 1 }
-      ], { duration: 360, delay: i * 30, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'backwards' });
+      var start = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sc + ') rotate(' + (mine ? 0 : -30) + 'deg)', dim = mine ? 1 : 0.3;
+      var ease = 'cubic-bezier(.3,.7,.3,1)', kind = play.type, id = +card.dataset.id;
+      if (kind === 'straight' || kind === 'straightflush') {
+        // a run arrives one card at a time, low to high
+        card.animate([
+          { transform: start, opacity: dim, offset: 0 },
+          { transform: 'translate(0,-30px) scale(1.18) rotate(-10deg)', opacity: 1, offset: 0.66 },
+          { transform: 'translate(0,4px) scale(.93)', offset: 0.86 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ], { duration: 330, delay: i * 75, easing: ease, fill: 'backwards' });
+      } else if (kind === 'flush') {
+        // one suit arrives as one: all five spin in together
+        card.animate([
+          { transform: start, opacity: dim, offset: 0 },
+          { transform: 'translate(0,-22px) scale(1.3) rotate(' + (300 + i * 8) + 'deg)', opacity: 1, offset: 0.7 },
+          { transform: 'translate(0,3px) scale(.94) rotate(360deg)', offset: 0.88 },
+          { transform: 'translate(0,0) scale(1) rotate(360deg)', opacity: 1, offset: 1 }
+        ], { duration: 480, delay: i * 14, easing: ease, fill: 'backwards' });
+      } else if (kind === 'fullhouse') {
+        // the three land first, then the pair drops onto them
+        var ofThree = play.cards.filter(function (x) { return (x >> 2) === (id >> 2); }).length === 3;
+        card.animate(ofThree ? [
+          { transform: start, opacity: dim, offset: 0 },
+          { transform: 'translate(0,-12px) scale(1.2) rotate(4deg)', opacity: 1, offset: 0.72 },
+          { transform: 'translate(0,3px) scale(.94)', offset: 0.88 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ] : [
+          { transform: start, opacity: 0, offset: 0 },
+          { transform: 'translate(0,-74px) scale(1.5) rotate(-6deg)', opacity: 1, offset: 0.6 },
+          { transform: 'translate(0,6px) scale(.88)', offset: 0.86 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ], { duration: 320, delay: ofThree ? i * 20 : 300, easing: ease, fill: 'backwards' });
+      } else if (kind === 'quads') {
+        // four of a kind close in from four corners; the odd card trails behind
+        var ofFour = play.cards.filter(function (x) { return (x >> 2) === (id >> 2); }).length === 4;
+        var corner = [[-120, -90], [120, -90], [-120, 90], [120, 90]][i % 4];
+        card.animate(ofFour ? [
+          { transform: start, opacity: dim, offset: 0 },
+          { transform: 'translate(' + corner[0] + 'px,' + corner[1] + 'px) scale(1.25) rotate(' + (i % 2 ? 25 : -25) + 'deg)', opacity: 1, offset: 0.5 },
+          { transform: 'translate(' + corner[0] * 1.08 + 'px,' + corner[1] * 1.08 + 'px) scale(1.3) rotate(' + (i % 2 ? 30 : -30) + 'deg)', offset: 0.72 },
+          { transform: 'translate(0,0) scale(.82) rotate(0deg)', offset: 0.93 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ] : [
+          { transform: start, opacity: 0, offset: 0 },
+          { transform: start, opacity: 0, offset: 0.55 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ], { duration: ofFour ? 460 : 620, easing: ease, fill: 'backwards' });
+      } else if (kind === 'pair') {
+        // a pair claps together
+        card.animate([
+          { transform: start, opacity: dim, offset: 0 },
+          { transform: 'translate(' + (i ? 26 : -26) + 'px,-16px) scale(1.2) rotate(' + (i ? 16 : -16) + 'deg)', opacity: 1, offset: 0.62 },
+          { transform: 'translate(' + (i ? -3 : 3) + 'px,2px) scale(.95)', offset: 0.88 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ], { duration: 340, easing: ease, fill: 'backwards' });
+      } else {
+        card.animate([
+          { transform: start, opacity: dim, offset: 0 },
+          { transform: 'translate(0,-14px) scale(1.22) rotate(4deg)', opacity: 1, offset: 0.72 },
+          { transform: 'translate(0,3px) scale(.94)', offset: 0.88 },
+          { transform: 'none', opacity: 1, offset: 1 }
+        ], { duration: 300, delay: kind === 'triple' ? i * 90 : i * 30, easing: ease, fill: 'backwards' });
+      }
     });
   }
 
@@ -1354,6 +1606,27 @@
     }, justEnded && !first && !FX.isCalm() ? 3000 : justEnded && !first ? 600 : 0);
   }
 
+  /* The titles handed out when a match ends (the table works out who gets what; see table.js). */
+  var AWARD = {
+    dos: ['\uD83D\uDC8E', 'Dos Boss', function (n) { return plural(n, 'two') + ' played'; }],
+    heavy: ['\uD83D\uDD28', 'Heavy Hitter', function (n) { return 'Biggest hand: ' + (['straight', 'flush', 'full house', 'four of a kind', 'straight flush'][Math.floor(n / 100) - 1] || 'five cards'); }],
+    streak: ['\uD83D\uDD25', 'On Fire', function (n) { return n + ' tricks in a row'; }],
+    sprint: ['\u26A1', 'Sprinter', function (n) { return 'Out in ' + plural(n, 'play'); }],
+    tricks: ['\uD83E\uDDF2', 'Trick Taker', function (n) { return plural(n, 'trick') + ' taken'; }],
+    combo: ['\uD83C\uDCCF', 'Combo Artist', function (n) { return n + ' five-card hands'; }],
+    bag: ['\uD83C\uDF92', 'Left Holding the Bag', function (n) { return 'Stuck with ' + n + ' cards'; }],
+    bench: ['\uD83E\uDE91', 'Bench Warmer', function (n) { return plural(n, 'pass', 'passes'); }]
+  };
+  function awardsHtml(list) {
+    var items = (list || []).filter(function (a) { return AWARD[a.id] && view.seats[a.seat]; }).map(function (a, i) {
+      var info = AWARD[a.id], s = view.seats[a.seat];
+      return '<li class="' + (a.seat === view.you ? 'mine' : '') + '" style="--c:' + color(s.av) + ';--i:' + i + '">' +
+        '<span class="aw-ic">' + info[0] + '</span><span class="aw-t"><b>' + info[1] + '</b>' +
+        '<span><i>' + esc(a.seat === view.you ? 'You' : s.name) + '</i> \u00B7 ' + esc(info[2](a.n)) + '</span></span></li>';
+    });
+    return items.length ? '<h3 class="aw-head">Match awards</h3><ul class="awards">' + items.join('') + '</ul>' : '';
+  }
+
   function fillResults() {
     if (view.tutor) return fillLesson();
     var r = view.result, match = view.phase === 'matchEnd';
@@ -1389,6 +1662,7 @@
       '<p class="res-sub">' + (match ? 'Final scores after ' + plural(view.rounds, 'round') : 'Round ' + view.round + ' of ' + view.rounds) + '</p>' +
       '<div class="res-head"><span></span><span></span><span></span><span>Round</span><span>Total</span></div>' +
       '<ol class="res-rows">' + rows + '</ol>' +
+      (match ? awardsHtml(r.awards) : '') +
       (!match && !view.manualNext ? '<div class="res-next" id="res-next"><i></i></div><p class="res-next-label" id="res-next-label"></p>' : '') +
       (match && crowd ? '<p class="res-ready" id="res-ready"></p>' : '') +
       '<div class="sheet-actions">' + actions + '</div>';
@@ -1397,6 +1671,9 @@
       var d = li.querySelector('.rd'), t = li.querySelector('.rt');
       countUp(d, 0, +d.dataset.to, 500, 260 + i * 110);
       countUp(t, +t.dataset.from, +t.dataset.to, 500, 760 + i * 110);
+    });
+    [].forEach.call($('results').querySelectorAll('.awards li'), function (li, i) {     // a note as each one is handed out
+      setTimeout(function () { if (li.isConnected && !FX.isCalm()) sfx.pick(i + 3); }, 1500 + i * 190);
     });
     tickClock();
   }

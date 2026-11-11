@@ -204,4 +204,25 @@ Tip: add `?fast` to the address to make solo bots play instantly.
 - Solo games add three practice aids: Hint (H) suggests a play; the chips above your hand (Pair, Straight, Flush...) jump straight to hands you can play; and the card-stack button in the top bar shows every card played so far this round.
 - At live tables those three aids are off, and the played-cards list is never sent to players.
 
+## Hands, rare moves and awards
+
+Every kind of hand arrives and lands its own way: a pair claps together, three of a kind hits three times, a straight deals out in order and ripples, a flush spins in and throws its suit into the air, a full house drops as a three and then a two, four of a kind comes in from the four corners and blows up, and a straight flush gets a beam of light in its suit's colour.
+
+A few things happen rarely enough to get a shout of their own:
+
+| Move | When | What you see |
+| --- | --- | --- |
+| Royal flush | A straight flush that tops out at an ace or a 2 | A crown drops onto the cards, gold light, all four suits and gold confetti |
+| Dos bomb | Four 2s in one hand | Three shockwaves and a suit thrown to each corner |
+| Trumped | A five-card hand beaten by a better *kind* of hand (a flush over a straight, say) | A slash across the table; the beaten cards are knocked flying |
+| Counter bomb | Four of a kind or a straight flush gets beaten | The slash, plus a second blast |
+| Out-dosed | A 2 beaten by a bigger 2 | Blades cross and the smaller 2 drops |
+| Sneaky three | A 3 wins the trick because nobody beat it | The shout tiptoes across the table |
+| Hat-trick, On fire, Unstoppable | Three, four, five or more tricks in a row | The player's plate catches fire |
+| Shut out | A round ends before a player put down a single card | Called out next to their loss |
+
+When a match ends, up to four awards are handed out under the final scores, spread around the table: Dos Boss (most 2s played), Heavy Hitter (biggest five-card hand), On Fire (longest run of tricks), Sprinter (out in the fewest plays), Trick Taker, Combo Artist (most five-card hands), Left Holding the Bag (most cards stuck in one round) and Bench Warmer (most passes). An award only goes to a clear leader; a tie is nobody's. The host works them out, so everyone at the table sees the same ones.
+
+With Effects set to Lite the shapes and screen shake are dropped; with Effects off, shouts simply appear and go.
+
 Fonts: Jersey 20, Rubik and Barlow Condensed, all under the SIL Open Font License. Matchmaking: Trystero by Dan Motzenbecker, MIT licence.

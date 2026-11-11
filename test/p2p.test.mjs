@@ -234,6 +234,20 @@ for (const text of ['', 'abc', 'pusoy', 'x'.repeat(55), 'y'.repeat(56), 'z'.repe
   assert.equal(V.state.rounds, 5); assert.equal(V.state.bots, 'normal'); assert.equal(V.state.turn, -1);
   assert.ok(V.state.seats.every((x) => x.n === 0 && x.av === 0 && x.score === 0 && typeof x.name === 'string'));
   assert.deepEqual(V.evs.map((e) => e.k), ['chat', 'join']);                // the bogus play and the seat-9 notice were dropped
+  // awards from a host are cut down to an id, a seat and a number
+  {
+    const core = TableCore.create({ rounds: 1, botMs: [1, 2], emotes: false }, 0);
+    core.join('a', { name: 'a' }, 0); core.act('a', { t: 'start' }, 0);
+    let g = 0; while (core.s.phase === 'playing' && g++ < 600) core.autoMove(core.s.turn, true, 0);
+    const view = JSON.parse(JSON.stringify(core.view(0, 0)));
+    view.result.awards = [{ id: 'dos', seat: 2, n: 4, extra: evil }, { id: evil, seat: 1, n: 1 }, { id: 'heavy', seat: 7, n: 1 }, { id: 'bench', seat: 0, n: evil }, evil, null]
+      .concat(Array.from({ length: 30 }, () => ({ id: 'tricks', seat: 1, n: 5 })));
+    const clean = P2P.cleanView(view, view.code);
+    assert.deepEqual(clean.result.awards, [{ id: 'dos', seat: 2, n: 4 }, { id: 'bench', seat: 0, n: 0 }]);          // and only the first six are even looked at
+    const copy = P2P.cleanSnapshot(JSON.parse(JSON.stringify(Object.assign({}, core.s, { stats: [{ twos: 3, tricks: evil, best: -4, junk: evil }, null, evil, { passes: 1e9 }] }))), core.s.code);
+    assert.deepEqual(copy.stats[0], { twos: 3, tricks: 0, passes: 0, fives: 0, big: 0, run: 0, best: 0, turns: 0, quick: 0, stuck: 0 });
+    assert.ok(copy.stats.length === 4 && copy.stats[3].passes === 0 && !JSON.stringify(copy.stats).includes('<'));
+  }
   const before = V.state;
   for (const junk of [null, 'state', { seats: [] }, { seats: [1, 2, 3, 4], phase: 'playing', you: 5 }, { seats: [{}, {}, {}, {}], phase: 'roundEnd', you: 0 }]) fakeHost.raw.send({ t: 'state', s: junk, ev: [] }, 'Vic');
   fakeHost.raw.send({ t: 'error', code: 'gone', msg: evil + ' bye' }, 'Vic');

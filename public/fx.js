@@ -75,6 +75,9 @@
           ctx.moveTo(p.x + h * sn, p.y - h * cs); ctx.lineTo(p.x + wd * cs, p.y + wd * sn);
           ctx.lineTo(p.x - h * sn, p.y + h * cs); ctx.lineTo(p.x - wd * cs, p.y - wd * sn);
           ctx.closePath(); ctx.fill();
+        } else if (p.kind === 'spr') {                       // a ready-drawn symbol (a suit), swaying as it falls
+          var sz = p.size * (0.55 + 0.45 * Math.min(1, k * 2.5)), sway = Math.sin(p.rot) * 6;
+          ctx.drawImage(p.img, p.x + sway - sz / 2, p.y - sz / 2, sz, sz);
         } else if (p.kind === 'conf') {
           var w = p.size * Math.abs(Math.cos(p.rot * 2.3)) + 1, hh = p.size * 0.35, c2 = Math.cos(p.rot), s2 = Math.sin(p.rot), ax = w / 2 * c2, ay = w / 2 * s2, bx = -hh * s2, by = hh * c2;
           ctx.beginPath();
@@ -154,6 +157,47 @@
     }
     kick();
   }
+  /* Symbols (the four suits, mostly) thrown up like a fountain. Each symbol is drawn
+   * once into a small picture and then just stamped, which is far cheaper than text. */
+  var sprites = {};
+  function sprite(glyph, color) {
+    var key = glyph + color;
+    if (!sprites[key]) {
+      var c = document.createElement('canvas'), g;
+      c.width = c.height = 64;
+      g = c.getContext('2d');
+      g.font = '700 52px "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols2", sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.lineWidth = 6; g.strokeStyle = '#131D28'; g.lineJoin = 'round';
+      g.strokeText(glyph, 32, 35); g.fillStyle = color; g.fillText(glyph, 32, 35);
+      sprites[key] = c;
+    }
+    return sprites[key];
+  }
+  function glyphs(x, y, glyph, color, count, o) {
+    if (calm || !ctx) return;
+    o = o || {};
+    var n = amount(count || 14), img = sprite(glyph, color);
+    for (var i = 0; i < n; i++) {
+      var a = (o.angle === undefined ? -1.5708 : o.angle) + (Math.random() - 0.5) * (o.spread || 1.5), v = (o.speed || 520) * (0.55 + Math.random() * 0.6);
+      add({ kind: 'spr', img: img, x: x + (Math.random() - 0.5) * 30, y: y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 760, drag: 0.5,
+        rot: Math.random() * 6, spin: 3 + Math.random() * 4, size: 20 + Math.random() * 14, color: color,
+        life: 1.1 + Math.random() * 0.7, max: 1.6 });
+    }
+    kick();
+  }
+  /* One-shot shapes behind or around the pile: a blast, a beam of light, a streak under a run of cards. */
+  function shape(host, cls, x, y, color, ms, vars, text) {
+    if (calm || lite || !host) return;
+    var el = document.createElement('div');
+    el.className = cls;
+    el.style.setProperty('--x', x + 'px'); el.style.setProperty('--y', y + 'px'); el.style.setProperty('--c', color || '#F5A742');
+    for (var k in vars || {}) el.style.setProperty(k, vars[k]);
+    if (text) el.textContent = text;
+    host.appendChild(el);
+    setTimeout(function () { el.remove(); }, ms);
+  }
+
   /* A spinning sunburst behind the pile. `host` is the playfield; x/y are pixels inside it. */
   function rays(host, x, y, color) {
     if (calm || lite || quality < 0.5 || !host) return;
@@ -201,7 +245,7 @@
 
   P.FX = {
     init: init, burst: burst, ring: ring, confetti: confetti, shake: shake, flash: flash,
-    diamonds: diamonds, rays: rays, kickClass: kickClass,
+    diamonds: diamonds, rays: rays, kickClass: kickClass, glyphs: glyphs, shape: shape,
     floatText: floatText, center: center, isCalm: function () { return calm; },
     setMode: function (mode) { calm = mode === 'off'; lite = mode === 'lite'; }, isLite: function () { return lite; },
     quality: function () { return quality; }

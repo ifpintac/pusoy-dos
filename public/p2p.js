@@ -84,8 +84,18 @@
       winner: int(r.winner, 0, 3, 0), champ: int(r.champ, -1, 3, -1),
       left: four(r.left, function (v) { return int(v, 0, 13, 0); }),
       delta: four(r.delta, function (v) { return int(v, -999, 999, 0); }),
-      hands: four(r.hands, function (v) { return cardList(v, 13); })
+      hands: four(r.hands, function (v) { return cardList(v, 13); }),
+      awards: (Array.isArray(r.awards) ? r.awards.slice(0, 6) : []).map(function (a) {
+        return a && typeof a === 'object' && typeof a.id === 'string' && /^[a-z]{2,10}$/.test(a.id) && isInt(a.seat, 0, 3)
+          ? { id: a.id, seat: a.seat, n: int(a.n, 0, 999, 0) } : null;
+      }).filter(Boolean)
     };
+  }
+  var STAT_KEYS = ['twos', 'tricks', 'passes', 'fives', 'big', 'run', 'best', 'turns', 'quick', 'stuck'];
+  function statOf(v) {
+    var out = {};
+    STAT_KEYS.forEach(function (k) { out[k] = int(v && typeof v === 'object' ? v[k] : 0, 0, 999, 0); });
+    return out;
   }
 
   /* What a guest shows on screen: a host's "state" message, rebuilt from scratch. */
@@ -168,6 +178,7 @@
       phase: s.phase, round: int(s.round, 0, 99, 0),
       scores: four(s.scores, function (v) { return int(v, -9999, 9999, 0); }),
       wins: four(s.wins, function (v) { return int(v, 0, 99, 0); }),
+      stats: four(s.stats, statOf),
       lastWinner: int(s.lastWinner, -1, 3, -1),
       hands: hands, passed: four(s.passed, function (v) { return !!v; }),
       turn: playing ? turn : -1, table: playing ? playOf(s.table) : null,

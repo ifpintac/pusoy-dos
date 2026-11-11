@@ -217,9 +217,55 @@
     else if (!s.readyAt) s.readyAt = now + s.opts.readyMs;
   };
 
+  /* ---------- match awards ----------
+   * A little bookkeeping per seat while the match is played, turned into a handful of
+   * titles when it ends. Worked out here, not on each screen, so everybody sees the same ones. */
+  function blankStats() {
+    return [0, 1, 2, 3].map(function () {
+      return { twos: 0, tricks: 0, passes: 0, fives: 0, big: 0, run: 0, best: 0, turns: 0, quick: 0, stuck: 0 };
+    });
+  }
+  T.stat = function (i) {
+    var s = this.s;
+    if (!Array.isArray(s.stats) || s.stats.length !== 4) s.stats = blankStats();      // a table carried over from an older host
+    return s.stats[i];
+  };
+  // id, what is counted, the least that earns it, and whether fewer is better
+  var AWARDS = [
+    ['dos', 'twos', 3],          // most 2s played
+    ['heavy', 'big', 100],       // the biggest five-card hand (kind * 100 + its top rank)
+    ['streak', 'best', 3],       // most tricks taken in a row
+    ['sprint', 'quick', 1, true],// out in the fewest plays
+    ['tricks', 'tricks', 4],     // most tricks taken
+    ['combo', 'fives', 3],       // most five-card hands
+    ['bag', 'stuck', 9],         // most cards left in hand when a round ended
+    ['bench', 'passes', 8]       // most passes
+  ];
+  function pickAwards(stats) {
+    var found = [], out = [], held = [0, 0, 0, 0];
+    AWARDS.forEach(function (a) {
+      var best = -1, tie = false;
+      for (var i = 0; i < 4; i++) {
+        var v = stats[i][a[1]];
+        if (!v || v < a[2]) continue;
+        if (best < 0 || (a[3] ? v < stats[best][a[1]] : v > stats[best][a[1]])) { best = i; tie = false; }
+        else if (v === stats[best][a[1]]) tie = true;
+      }
+      if (best >= 0 && !tie) found.push({ id: a[0], seat: best, n: stats[best][a[1]] });      // a tie is nobody's award
+    });
+    // spread them around: one each first, then seconds, four at most
+    for (var pass = 0; pass < 2; pass++) {
+      found.forEach(function (f) {
+        if (out.length < 4 && held[f.seat] === pass && out.indexOf(f) < 0) { out.push(f); held[f.seat]++; }
+      });
+    }
+    return out;
+  }
+
   T.startMatch = function (now) {
     var s = this.s;
     s.round = 0; s.scores = [0, 0, 0, 0]; s.wins = [0, 0, 0, 0]; s.lastWinner = -1;
+    s.stats = blankStats();
     s.readyAt = 0; s.seats.forEach(function (x) { x.ready = false; });
     this.nextRound(now);
   };
@@ -263,6 +309,7 @@
     s.hands = E.deal();
     s.passed = [false, false, false, false];
     s.table = null; s.trick = []; s.seen = []; s.result = null; s.nextAt = 0;
+    for (var q = 0; q < 4; q++) { this.stat(q).turns = 0; this.stat(q).run = 0; }
     s.phase = 'playing';
     // Lowest card always plays first: whoever holds the 3 of clubs opens every round,
     // and their opening play has to include it (alone or inside a hand).
@@ -308,6 +355,10 @@
     s.mustOpen = false;
     s.seen = (s.seen || []).concat(c.cards);
     if (!s.opts.passLock) s.passed = [false, false, false, false];
+    var st = this.stat(i);
+    st.turns++;
+    st.twos += c.cards.filter(function (id) { return id >= 48; }).length;
+    if (c.cards.length === 5) { st.fives++; st.big = Math.max(st.big, E.TIER[c.type] * 100 + (Math.max.apply(null, c.cards) >> 2) + 1); }
     this.emit({ k: 'play', seat: i, cards: c.cards, name: c.name, type: c.type, left: s.hands[i].length });
     this.botMoods(i, c, now);
     s.seq++;
@@ -325,6 +376,7 @@
     if (s.turn !== i) return { error: 'It isn’t your turn.' };
     if (!s.table) return { error: 'You have the lead. Play something.' };
     s.passed[i] = true;
+    this.stat(i).passes++;
     this.emit({ k: 'pass', seat: i });
     s.seq++;
     this.advance(now);
@@ -341,6 +393,9 @@
     if (n === s.table.by) {
       // Everyone else passed: the last player to play takes the trick and leads.
       s.table = null; s.trick = []; s.passed = [false, false, false, false];
+      for (var j = 0; j < 4; j++) if (j !== n) this.stat(j).run = 0;
+      var w = this.stat(n);
+      w.tricks++; w.run++; w.best = Math.max(w.best, w.run);
       this.emit({ k: 'clear', seat: n });
       extra += CLEAR_MS;
     }
@@ -357,7 +412,12 @@
       pen[i] = n * (n >= 13 ? 3 : n >= 10 ? 2 : 1);
       pot += pen[i];
     }
-    for (i = 0; i < 4; i++) { delta[i] = i === winner ? pot : -pen[i]; s.scores[i] += delta[i]; }
+    for (i = 0; i < 4; i++) {
+      delta[i] = i === winner ? pot : -pen[i]; s.scores[i] += delta[i];
+      var st = this.stat(i);
+      if (i === winner) st.quick = st.quick ? Math.min(st.quick, st.turns) : st.turns;
+      else st.stuck = Math.max(st.stuck, left[i]);
+    }
     s.wins[winner]++;
     s.lastWinner = winner;
     s.turn = -1; s.turnAt = 0; s.actAt = 0;
@@ -377,6 +437,7 @@
         if (s.scores[i] > s.scores[champ] || (s.scores[i] === s.scores[champ] && s.wins[i] > s.wins[champ])) champ = i;
       }
       s.result.champ = champ;
+      s.result.awards = pickAwards(s.stats);
       for (i = 0; i < 4; i++) s.series[i] = i === champ ? s.series[i] + 1 : 0;      // a winning streak across rematches
       this.emit({ k: 'matchEnd', champ: champ });
       var humans = this.humans();

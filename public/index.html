@@ -9,6 +9,13 @@
 <meta name="description" content="Pusoy Dos: dump your hand before anyone else. Play solo against bots or jump into a live table.">
 <title>Pusoy Dos</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232F6D70'/%3E%3Crect x='16' y='9' width='32' height='46' rx='5' fill='%23F7F1E3' stroke='%23131D28' stroke-width='3'/%3E%3Cpath d='M32 18l11 14-11 14-11-14z' fill='%23D8473E'/%3E%3C/svg%3E">
+<!-- "Add to Home Screen" on a phone opens the game full screen, like an app -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pusoy Dos">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -44,6 +51,8 @@
       <button class="btn btn-play btn-big" id="btn-solo">Play solo</button>
       <p class="note"><span id="solo-note">3 normal bots, 5 rounds, no clock.</span>
         <button class="link" id="btn-solo-opts">Change</button></p>
+      <p class="note" id="motion-note" hidden>Animations are off because this device asks for less motion.
+        <button class="link" id="btn-motion-on">Turn them on</button></p>
     </section>
 
     <section class="live panel" aria-labelledby="live-title">

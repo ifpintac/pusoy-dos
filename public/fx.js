@@ -1,7 +1,8 @@
 /* Pusoy Dos — arcade effects: square sparks, impact rings, confetti,
  * screen shake, flashes and floating score text.
  * One canvas sits over the whole page; it only animates while something is on it.
- * Everything here is decoration: if the visitor prefers reduced motion it stays quiet. */
+ * Everything here is decoration. setMode('off') keeps it all quiet and setMode('lite')
+ * thins it out; the page decides which, from the player's Effects setting. */
 (function (root) {
   'use strict';
   var P = (root.Pusoy = root.Pusoy || {});
@@ -14,11 +15,6 @@
 
   function init(canvas) {
     cv = canvas; ctx = cv.getContext('2d');
-    try {
-      var mq = root.matchMedia('(prefers-reduced-motion: reduce)');
-      calm = mq.matches;
-      if (mq.addEventListener) mq.addEventListener('change', function (e) { calm = e.matches; });
-    } catch (e) { /* old browser: assume motion is fine */ }
     resize();
     cv.classList.add('idle');             // out of the page entirely until there is something to draw
     root.addEventListener('resize', resize);
@@ -206,7 +202,7 @@
     init: init, burst: burst, ring: ring, confetti: confetti, shake: shake, flash: flash,
     diamonds: diamonds, rays: rays, kickClass: kickClass,
     floatText: floatText, center: center, isCalm: function () { return calm; },
-    setLite: function (on) { lite = !!on; }, isLite: function () { return lite; },
+    setMode: function (mode) { calm = mode === 'off'; lite = mode === 'lite'; }, isLite: function () { return lite; },
     quality: function () { return quality; }
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -1,12 +1,28 @@
 # Pusoy Dos
 
+**Play it now: https://ifpintac.github.io/pusoy-dos/**
+
 The card game, in the browser, arcade style. Play solo against bots, or open a live table that anyone can join.
+
+![The 2 of diamonds lands: a sunburst, diamonds and the shout "Diamond dos!"](screenshots/diamond-dos.png)
+
+| Home and live tables | Your turn |
+| --- | --- |
+| ![Home screen with two live tables to join](screenshots/home.png) | ![A full house picked from the hand, ready to play](screenshots/table.png) |
+
+On a phone:
+
+<p>
+  <img src="screenshots/phone-table.png" width="260" alt="Phone: a full hand in two rows with large Pass, Hint and Play buttons">
+  <img src="screenshots/phone-diamond-dos.png" width="260" alt="Phone: the 2 of diamonds effect">
+  <img src="screenshots/phone-new-table.png" width="260" alt="Phone: opening a table and choosing the bot level">
+</p>
 
 No build step and no server. The whole game is the plain HTML, CSS and JavaScript in `public/`, so any static host (GitHub Pages, Cloudflare Pages, Netlify) can serve it for free.
 
 ## Try it
 
-Double-click `public/index.html`. Solo works straight away, and so do live tables: open the file in a second browser window and you can host in one and join from the other.
+Open https://ifpintac.github.io/pusoy-dos/ or, from a copy of this folder, double-click `public/index.html`. Solo works straight away, and so do live tables: open the file in a second browser window and you can host in one and join from the other.
 
 ## Put it online (GitHub Pages)
 
@@ -80,7 +96,7 @@ Pick the level when you start a solo game or open a table. At a table it applies
 
 | Level | How it plays |
 | --- | --- |
-| Easy | A beginner: dumps its lowest cards, breaks up its own hands, burns 2s early, and never notices that someone is about to go out. |
+| Easy | Forgiving on purpose: it often lets a trick go when it could have played, hangs on to its big cards too long, leads one card at a time even from a pair, rarely spots a five-card hand, and never notices that someone is about to go out. |
 | Normal | Plans its hand into groups, sheds weak cards first, saves 2s and big hands to win the lead back, and blocks a player who is on their last card. |
 | Hard | Normal, plus it counts cards, so it knows exactly which of its plays nobody can beat. It also thinks ahead: it deals the unseen cards out at random a few times, plays each option to the end of the round, and keeps the one that scores best. |
 
@@ -90,9 +106,11 @@ Measured with `npm run duel` (one bot against three of another level; 25% of rou
 
 | Match-up | Rounds won | Points per round |
 | --- | --- | --- |
-| Easy against three Normal | 15% | -2.6 |
-| Normal against three Easy | 37% | +1.7 |
+| Easy against three Normal | 6% | -10.4 |
+| Normal against three Easy | 54% | +14.8 |
 | Hard against three Normal | 31% | +4.2 |
+
+Easy is tuned against stand-ins for a person who is still learning. One that only ever leads single cards and sometimes forgets it could play wins 55% of rounds and 83% of five-round matches against three Easy bots. One that always plays its cheapest card wins 81% of rounds. The chances Easy plays by are the `EASY` numbers near the top of the beginner section in `public/bot.js`; lower them to make it tougher.
 
 Hard's thinking takes about 30 ms a move on the device that referees the table (`THINK_MS` in `public/net.js`), so a slow phone gets fewer look-aheads and plays a little weaker. On the optional referee server it is off by default to stay inside the free plan's CPU limit, which leaves Hard there about as strong as Normal; `BOT_THINK_MS` in `server.js` turns it on. The Hint button in solo games always uses the Hard brain.
 
@@ -106,7 +124,8 @@ The table is drawn so that nothing moves unless something happened: while you th
 - Shines, pulses and the sunburst only slide, scale or fade ready-made pictures. They no longer repaint cards every frame.
 - The spark canvas is capped at about a million pixels whatever the screen size, only clears the patch it drew on, and leaves the page when it is empty.
 - If a device still falls under 30 frames a second during a big effect, the game quietly uses fewer sparks from then on.
-- **Effects: light** on the home screen switches off the decoration (shines, pulses, screen shake, sunburst) and thins the sparks, for devices that find the full show heavy. The browser's "reduce motion" setting is respected as before.
+- **Effects** on the home screen has three settings. Full is the whole show. Light keeps the game's moves and drops the decoration (shines, pulses, screen shake, sunburst) and thins the sparks, for devices that find the full show heavy. Off stops all motion.
+- A device set to "reduce motion" starts on Off, and the home screen says so with a one-tap "Turn them on". Many phones report "reduce motion" when animations are removed in accessibility settings or developer options, and some do while saving battery, so the game no longer treats it as final.
 
 ## What's where
 
@@ -120,6 +139,8 @@ public/p2p.js       player-hosted tables: hosting, joining, host handover, the l
 public/vendor/      Trystero (matchmaking + WebRTC), bundled into one file
 public/engine.js    the rules: what a hand is, what beats what, dealing
 public/bot.js       the computer players, three levels (also powers the Hint button)
+public/manifest.webmanifest, public/icons/   what "Add to Home Screen" uses
+screenshots/        the pictures in this README
 public/table.js     one table: seats, turns, passing, scoring, timers
 public/config.js    player-hosted (default) or referee server, plus relay/TURN options
 server.js           optional referee server (Cloudflare Worker)
@@ -143,12 +164,18 @@ The player-hosted test uses pretend browsers on an in-memory network, so it need
 
 Tip: add `?fast` to the address to make solo bots play instantly.
 
+## On a phone
+
+- Held upright, a full hand sits in two rows: low cards behind, high cards in front. Each card keeps a tap strip of about 50 px (it was about 25 px in a single row). Once the cards fit side by side they close up into one row.
+- Cards and the pile are larger, the three buttons are taller, and dialogs slide up from the bottom edge.
+- **Add to Home Screen** (browser menu on Android, Share menu on iPhone) installs the game with its own icon and opens it full screen, without the browser's bars. There is no offline mode: it still loads from the web each time.
+- Held sideways, the hand stays in one row with the buttons beside the status line.
+
 ## At the table
 
 - Tap cards to pick them, or press and drag across several.
 - Keyboard: arrow keys move, Space picks a card, Enter plays, P passes, S sorts, Esc clears.
 - Solo games add three practice aids: Hint (H) suggests a play; the chips above your hand (Pair, Straight, Flush...) jump straight to hands you can play; and the card-stack button in the top bar shows every card played so far this round.
 - At live tables those three aids are off, and the played-cards list is never sent to players.
-- Effects calm down automatically for anyone whose device is set to reduce motion.
 
 Fonts: Jersey 20, Rubik and Barlow Condensed, all under the SIL Open Font License. Matchmaking: Trystero by Dan Motzenbecker, MIT licence.

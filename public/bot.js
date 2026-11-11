@@ -10,8 +10,11 @@
  *         looks ahead: it deals the unseen cards out at random a number of times,
  *         plays each of its options through to the end of the round, and keeps the
  *         one that scores best. It never looks at anybody's actual hand.
- * easy    Plays like a beginner: dumps its lowest cards, breaks up its own hands,
- *         burns 2s early and never notices when somebody is about to go out.
+ * easy    Forgiving on purpose. It often lets a trick go even though it could play,
+ *         hangs on to its big cards for too long, leads one card at a time even
+ *         when it holds a pair, rarely spots a five-card hand, and never notices
+ *         that somebody is about to go out. Someone still learning should win
+ *         about half the rounds against three of these (a fair share is a quarter).
  */
 (function (root) {
   'use strict';
@@ -358,25 +361,41 @@
 
   /* ---- the beginner ---- */
 
+  /* How forgiving the beginner is. Each number is a chance between 0 and 1. */
+  var EASY = {
+    pass: 0.33,        // lets a trick go although it could have played
+    passFace: 0.5,     // ...when playing would cost a jack, queen, king or ace
+    passTwo: 0.75,     // ...when it would cost a 2
+    passFive: 0.6,     // ...when the table holds a five-card hand
+    splitPair: 0.6,    // leads one card of a pair or triple instead of the set
+    leadFive: 0.15,    // notices a five-card hand it could lead
+    nerve: 3           // with this many cards or fewer it finally just plays
+  };
+
   function easy(view) {
-    var hand = view.hand, table = view.table;
+    var hand = view.hand, table = view.table, n = hand.length;
     if (table) {
       var legal = E.legalPlays(hand, table, false);
       if (!legal.length) return null;
-      if (legal[0].cards.length === hand.length) return legal[0].cards;
-      // loses its nerve now and then, more often when it would cost a big card
-      var big = rankOf(legal[0].cards[legal[0].cards.length - 1]) >= 10;
-      if (hand.length > 3 && Math.random() < (big ? 0.3 : 0.12)) return null;
-      return legal[0].cards;                       // otherwise the cheapest thing that beats the table
+      var pick = legal[0];                           // only ever the cheapest thing that beats the table
+      if (pick.cards.length === n) return pick.cards;
+      if (n > EASY.nerve) {
+        var top = rankOf(pick.cards[pick.cards.length - 1]);
+        var chance = table.size === 5 ? EASY.passFive : top === 12 ? EASY.passTwo : top >= 8 ? EASY.passFace : EASY.pass;
+        if (Math.random() < chance) return null;
+      }
+      return pick.cards;
     }
-    // On the lead: get rid of the lowest card, with whatever obviously goes with it.
-    var fives = Math.random() < 0.5;                // only spots a five-card hand half the time
-    var groups = decompose(hand, fives ? RECIPES[1] : []);
+    // On the lead: the lowest card it holds, often on its own even when it has a partner.
     if (view.mustOpen) {
-      var open = groups.filter(function (h) { return h.cards.indexOf(E.THREE_OF_CLUBS) >= 0; })[0];
-      return open ? open.cards : [E.THREE_OF_CLUBS];
+      var mates = hand.filter(function (id) { return rankOf(id) === 0; });
+      return mates.length >= 2 && Math.random() >= EASY.splitPair ? mates.slice(0, 2) : [E.THREE_OF_CLUBS];
     }
-    return lowestBy(groups, function (h) { return h.cards[0]; }).cards;
+    var groups = decompose(hand, Math.random() < EASY.leadFive ? RECIPES[1] : []);
+    if (groups.length === 1) return groups[0].cards;
+    var low = lowestBy(groups, function (h) { return h.cards[0]; });
+    if (low.size > 1 && low.size < 5 && n > low.size && Math.random() < EASY.splitPair) return [low.cards[0]];
+    return low.cards;
   }
 
   function lead(view, myPlan, minOpp, nextN, k) {
@@ -456,5 +475,5 @@
 
   var LEVELS = ['easy', 'normal', 'hard'];
 
-  P.Bot = { choose: choose, plan: plan, LEVELS: LEVELS, knowledge: knowledge, unbeatable: unbeatable };
+  P.Bot = { choose: choose, plan: plan, LEVELS: LEVELS, knowledge: knowledge, unbeatable: unbeatable, EASY: EASY };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

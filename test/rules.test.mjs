@@ -221,12 +221,23 @@ t('hard bots cash a sure winner first; normal bots do not see it', () => {
   assert.deepEqual(Bot.choose({ ...view }), h('5c 5s'));                       // no level given = normal
 });
 
-t('easy bots dump their lowest card and follow with the cheapest play', () => {
+t('easy bots are forgiving: lowest card first, cheapest answer, and they often let a trick go', () => {
   const lead = { hand: h('3s 9c 9d 2d'), table: null, seat: 0, mustOpen: false, counts: [4, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
   assert.deepEqual(Bot.choose(lead), h('3s'));
-  // down to three cards it never chickens out, and it will happily burn the 2 of diamonds
-  const follow = { hand: h('4c 6s 2d'), table: { ...ev('Ks'), by: 1 }, seat: 0, mustOpen: false, counts: [3, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
-  assert.deepEqual(Bot.choose(follow), h('2d'));
+  // down to three cards it always plays, and it will happily burn the 2 of diamonds
+  const last = { hand: h('4c 6s 2d'), table: { ...ev('Ks'), by: 1 }, seat: 0, mustOpen: false, counts: [3, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
+  assert.deepEqual(Bot.choose(last), h('2d'));
+  // with a fuller hand it passes a good share of the time although it could beat the table...
+  const could = { hand: h('4c 6s 8d 9h Jc Qs Kd Ah'), table: { ...ev('5s'), by: 1 }, seat: 0, mustOpen: false, counts: [8, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
+  let passes = 0, plays = new Set();
+  for (let i = 0; i < 600; i++) { const c = Bot.choose(could); if (c) plays.add(c.join()); else passes++; }
+  assert.ok(passes > 120 && passes < 300, 'passed ' + passes + ' of 600');
+  assert.deepEqual([...plays], [String(c('6s'))]);                      // ...and when it plays, it is always the cheapest card that works
+  // it leads a single off a pair more often than not, and a normal bot never passes up the pair here
+  const pair = { hand: h('5c 5s 9d Kh 2c'), table: null, seat: 0, mustOpen: false, counts: [5, 6, 6, 6], passed: [false, false, false, false], level: 'easy' };
+  let singles = 0;
+  for (let i = 0; i < 400; i++) if (Bot.choose(pair).length === 1) singles++;
+  assert.ok(singles > 180 && singles < 300, 'led a single ' + singles + ' of 400');
 });
 
 console.log(`rules: ${n} groups of checks passed`);

@@ -636,6 +636,44 @@ dialog.sheet-rules { width: min(96vw, 600px); }
   .hud .icon-btn { width: 36px; height: 36px; }
   .hud .chip { height: 36px; padding: 2px 7px; font-size: 1.3rem; letter-spacing: .08em; }
 }
+/* ---- a phone held upright ----
+   Bigger cards in a hand two rows deep (see layoutHand), a bigger pile, taller buttons
+   under the thumb, and sheets that slide up from the bottom edge. */
+@media (max-width: 640px) and (orientation: portrait) {
+  :root {
+    --cw: clamp(48px, min(15.6vw, 9.6vh), 68px);
+    --pw: clamp(42px, min(14.2vw, 8.2vh), 62px);
+  }
+  .hand { transition: opacity .2s, height .22s ease; }
+  .hand.rows2 { height: calc(var(--cw) * 2.13 + 34px); }
+  .hand .card { -webkit-touch-callout: none; }
+  .chat-tray { bottom: calc(var(--cw) * 2.13 + 176px); }
+  .dock { padding-top: 8px; }
+  .me-row { min-height: 46px; gap: 8px; }
+  .me .who .nm { display: none; }                   /* you know who you are: the room goes to the status line */
+  .status { font-size: 1rem; }
+  .combos { margin-top: 2px; }
+  .actions { gap: 8px; margin-top: 6px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.9fr); }
+  .no-aids .actions { grid-template-columns: minmax(0, 1fr) minmax(0, 1.9fr); }
+  .actions .btn { min-height: 54px; padding: 0 6px; }
+  .actions .btn-play.long { font-size: 1.2rem; line-height: .95; white-space: normal; text-wrap: balance; }
+  .tool { min-height: 40px; padding: 0 14px; }
+  .pill { min-height: 44px; padding: 0 16px; }
+  .hud .icon-btn { width: 40px; height: 40px; }
+  .seat[data-pos="1"] .cnt, .seat[data-pos="3"] .cnt, .seat[data-pos="2"] .cnt { font-size: 1.6rem; }
+  .pile { top: 64%; }
+  .pile-label { top: calc(64% + var(--pw) * .7 + 12px); }
+
+  dialog.sheet, dialog.sheet-small, dialog.sheet-seen, dialog.sheet-rules {
+    width: 100%; max-width: 100%; margin: auto 0 0; max-height: 88dvh;
+    border-radius: 22px 22px 0 0; border-bottom: 0; padding: 20px 18px calc(18px + env(safe-area-inset-bottom));
+    box-shadow: none;
+  }
+  dialog.sheet[open] { animation: sheet-up .26s cubic-bezier(.2, .9, .3, 1); }
+  .sheet-actions .btn { min-height: 52px; }
+}
+@keyframes sheet-up { from { transform: translateY(100%); } }
+
 /* short phones: tighter side seats so the pile still fits between them */
 @media (max-width: 640px) and (max-height: 700px) and (orientation: portrait) {
   .seat[data-pos="2"] { top: 10px; }
@@ -647,6 +685,7 @@ dialog.sheet-rules { width: min(96vw, 600px); }
   .seat[data-pos="1"] .cnt, .seat[data-pos="3"] .cnt { width: 23px; height: 29px; font-size: 1.35rem; }
   .pile { top: 64%; }
   .pile-label { top: calc(64% + var(--pw) * .7 + 10px); }
+  :root { --pw: clamp(38px, 12.4vw, 48px); }
   .me-row { min-height: 44px; }
   .combos { height: 30px; margin-top: 2px; }
   .combo { height: 27px; font-size: 1.12rem; }
@@ -705,10 +744,9 @@ dialog.sheet-rules { width: min(96vw, 600px); }
   .chat-tray { bottom: calc(var(--cw) * 1.4 + 80px); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-  .bg svg { display: none; }
-}
+/* "Effects: off". A device set to reduce motion starts here until the player picks another setting. */
+.calm *, .calm *::before, .calm *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+.calm .bg svg { display: none; }
 
 /* "Effects: light" on the home screen: the game keeps its moves and sounds, and drops
    the decoration that never stops (shines, pulses, bobbing cards) and the screen shakes. */

@@ -22,12 +22,14 @@
     for (var i = 0; i < a.length; i++) s += ('0' + a[i].toString(16)).slice(-2);
     return s;
   }
-  var me = { name: '', av: Math.floor(Math.random() * 6), key: randomKey(), sound: true, sort: 'rank', rounds: 5, passLock: true, bots: 'normal', lite: false };
+  var me = { name: '', av: Math.floor(Math.random() * 6), key: randomKey(), sound: true, sort: 'rank', rounds: 5, passLock: true, bots: 'normal', lite: false, fx: 'auto' };
   try {
     var saved = JSON.parse(localStorage.getItem('pusoy2') || 'null');
     if (saved && typeof saved === 'object') for (var k in me) if (saved[k] !== undefined && typeof saved[k] === typeof me[k]) me[k] = saved[k];
   } catch (e) { /* private mode: fine, nothing is remembered */ }
   if (Bot.LEVELS.indexOf(me.bots) < 0) me.bots = 'normal';
+  if (me.lite) { me.lite = false; me.fx = 'lite'; }                  // the earlier two-way switch
+  if (['auto', 'full', 'lite', 'off'].indexOf(me.fx) < 0) me.fx = 'auto';
   function save() { try { localStorage.setItem('pusoy2', JSON.stringify(me)); } catch (e) { /* ignore */ } }
   save();
   // Each browser tab is its own player at player-hosted tables, so you can try a
@@ -229,7 +231,11 @@
       if (lobbyState === 'online') lobby.send({ t: 'board' });
     });
     $('btn-sound-home').addEventListener('click', toggleSound);
-    $('btn-fx-home').addEventListener('click', function () { me.lite = !me.lite; save(); renderFx(); });
+    $('btn-fx-home').addEventListener('click', function () {
+      me.fx = { full: 'lite', lite: 'off', off: 'full' }[fxMode()]; save(); renderFx();
+    });
+    $('btn-motion-on').addEventListener('click', function () { me.fx = 'full'; save(); renderFx(); sfx.pick(3); });
+    if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', renderFx);
 
     $('form-new').addEventListener('submit', function (e) {
       if (e.submitter && e.submitter.value === 'cancel') return;
@@ -325,11 +331,20 @@
     $('btn-sound').setAttribute('aria-label', me.sound ? 'Turn sound off' : 'Turn sound on');
   }
   function toggleSound() { me.sound = !me.sound; save(); renderSound(); if (me.sound) sfx.pick(3); }
-  /* "Effects: light" keeps the game's moves and drops the decoration; for devices that find the full show heavy. */
+  /* Effects: full, light (the moves without the decoration) or off (nothing moves).
+   * Until the player chooses, a device set to "reduce motion" gets off and everyone
+   * else gets full. Phones often report "reduce motion" from a battery saver, so the
+   * choice is the player's to override and the home screen says when it is off. */
+  var motionQuery = null;
+  try { motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)'); } catch (e) { /* old browser */ }
+  function fxMode() { return me.fx !== 'auto' ? me.fx : motionQuery && motionQuery.matches ? 'off' : 'full'; }
   function renderFx() {
-    $('btn-fx-home').textContent = me.lite ? 'Effects: light' : 'Effects: full';
-    document.body.classList.toggle('lite', me.lite);
-    FX.setLite(me.lite);
+    var mode = fxMode();
+    $('btn-fx-home').textContent = 'Effects: ' + (mode === 'lite' ? 'light' : mode);
+    document.body.classList.toggle('lite', mode === 'lite');
+    document.body.classList.toggle('calm', mode === 'off');
+    $('motion-note').hidden = !(mode === 'off' && me.fx === 'auto');
+    FX.setMode(mode);
   }
 
   function showRules() {
@@ -766,6 +781,8 @@
   /* ---------- your hand ---------- */
 
   var handBox = null;          // cached size of the hand area and of one card
+  var phoneQuery = null;       // matches the phone rules in style.css
+  try { phoneQuery = window.matchMedia('(max-width: 640px) and (orientation: portrait)'); } catch (e) { /* old browser */ }
 
   function captureHandRects() {
     var r = {};
@@ -803,17 +820,26 @@
   function layoutHand() {
     var ids = handEl._order || [], nodes = handEl._nodes || {}, n = ids.length;
     if (!n) return;
-    // Measuring forces the browser to lay the page out, so the two sizes are read once and kept until the window changes.
-    if (!handBox || !handBox.W) handBox = { W: handEl.clientWidth, cw: nodes[ids[0]].offsetWidth || 60 };
+    // Measuring forces the browser to lay the page out, so the sizes are read once and kept until the window changes.
+    if (!handBox || !handBox.W) handBox = { W: handEl.clientWidth, cw: nodes[ids[0]].offsetWidth || 60, phone: !!(phoneQuery && phoneQuery.matches) };
     var W = handBox.W, cw = handBox.cw;
-    var step = n > 1 ? Math.min(cw * 0.8, (W - cw) / (n - 1)) : 0;
-    var x0 = (W - (cw + step * (n - 1))) / 2;
     var fan = Math.min(1, W / 700);
+    // On a phone held upright a full hand sits in two rows, low cards behind and high
+    // cards in front, so every card stays wide enough to tap. Once the cards fit
+    // comfortably side by side they close up into one row and the table gets the room back.
+    var two = handBox.phone && n > 1 && (W - cw) / (n - 1) < cw * 0.6;
+    var back = two ? Math.ceil(n / 2) : n;
+    var drop = cw * 0.73;                                   // how far the front row sits below the back row
+    handEl.classList.toggle('rows2', two);
     ids.forEach(function (id, i) {
-      var t = n > 1 ? i / (n - 1) - 0.5 : 0, on = sel.indexOf(id) >= 0;
-      var y = t * t * 26 * fan * (n / 13) - (on ? cw * 0.28 : 0);
+      var front = i >= back, m = front ? n - back : back, k = front ? i - back : i;
+      var step = m > 1 ? Math.min(cw * (two ? 0.94 : 0.8), (W - cw) / (m - 1)) : 0;
+      var x0 = (W - (cw + step * (m - 1))) / 2;
+      var t = m > 1 ? k / (m - 1) - 0.5 : 0, on = sel.indexOf(id) >= 0;
+      var arc = two ? t * t * 8 : t * t * 26 * fan * (n / 13);
+      var y = arc + (front ? drop : 0) - (on ? cw * 0.28 : 0);
       var c = nodes[id];
-      c.style.transform = 'translate(' + (x0 + i * step) + 'px,' + y + 'px) rotate(' + (t * 9 * fan * (n / 13)) + 'deg)' + (on ? ' scale(1.04)' : '');
+      c.style.transform = 'translate(' + (x0 + k * step) + 'px,' + y + 'px) rotate(' + (t * (two ? 3 : 9 * fan * (n / 13))) + 'deg)' + (on ? ' scale(1.04)' : '');
       c.style.zIndex = i + 1;
       c.classList.toggle('sel', on);
       c.classList.toggle('kb', i === kb);
@@ -896,6 +922,7 @@
 
     st.textContent = text; st.className = 'status ' + cls + (st.classList.contains('pop') ? ' pop' : '');
     play.disabled = !canPlay || sending; play.textContent = label;
+    play.classList.toggle('long', label.length > 9);          // "Play straight flush" gets two lines on a phone
     play.classList.toggle('ready', canPlay && !sending);
     handEl.classList.toggle('ok', canPlay);
     pass.disabled = !(myTurn && view.table) || sending;

@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 const { P2P, Bot, TableCore } = globalThis.Pusoy;
 
 Object.assign(P2P.timing, { heartbeat: 40, hostLost: 220, recover: 500, connect: 600, announce: 120, tableTtl: 400, searching: 150, linger: 20, pinWait: 150 });
+P2P.limits.perSec = 400;      // these pretend browsers ping and play dozens of times a second; real ones do not
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms = 4000, what = 'condition') => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return; await sleep(10); } throw new Error('timed out waiting for ' + what); };
 
@@ -58,7 +59,7 @@ const H = browser('Hana', 0), A = browser('Ari', 1), B = browser('Bea', 2), L = 
 L.openLobby(); H.openLobby();
 await until(() => L.lobbyData, 1000, 'lobby to start');
 assert.equal(L.lobbyData.tables.length, 0);
-H.lobby.send({ t: 'create', o: { name: 'Friday <b>Night</b>', pub: true, rounds: 2, turnSecs: 30, botMs: [4, 8], bots: 'easy' } });
+H.lobby.send({ t: 'create', o: { name: 'Friday <b>Night</b>', pub: true, rounds: 2, turnSecs: 30, botMs: [4, 8], bots: 'easy', readyMs: 300 } });
 await until(() => H.go);
 const code = H.go;
 assert.match(code, /^[A-Z]{4}$/);
@@ -86,15 +87,18 @@ ok('guests are seated; lobby shows 3 of 4; hints and the card tracker are off');
 const C = browser('Cy', 3); C.sit(code);
 await until(() => C.state && humans(H.state).length === 4);
 const D = browser('Dee', 4); D.sit(code);
-await until(() => D.errors.some((e) => e.code === 'full'), 2000, 'full-table refusal');
+await until(() => D.session.watching && D.state && D.state.you === -1, 2000, 'the fifth player to end up watching');
+assert.equal(humans(H.state).length, 4);
 C.session.close();
 await until(() => humans(H.state).length === 3, 2000, 'Cy to leave');
-ok('a full table turns the fifth player away; leaving frees the seat for a bot');
+D.session.close();
+await until(() => H.state.watchers === 0, 2000, 'the watcher to leave');
+ok('a fifth player gets no seat at a full table (they watch); leaving frees the seat for a bot');
 
 // ---- 3. play: everyone only ever holds their own cards -------------------------
 A.session.send({ t: 'play', cards: [51] });
 await until(() => A.errors.some((e) => e.code === 'move'));
-H.session.send({ t: 'start' });
+[H, A, B].forEach((x) => x.session.send({ t: 'ready' }));        // three players: the deal waits until all are ready
 await until(() => [H, A, B].every((x) => x.state.phase === 'playing'));
 for (const x of [H, A, B]) { assert.equal(x.state.hand.length, 13); assert.equal(JSON.stringify(x.state).includes('"hands"'), false); }
 assert.equal(new Set([...H.state.hand, ...A.state.hand, ...B.state.hand]).size, 39);
@@ -248,11 +252,12 @@ for (const text of ['', 'abc', 'pusoy', 'x'.repeat(55), 'y'.repeat(56), 'z'.repe
   await until(() => H3.go); const c3 = H3.go; H3.lobby.close(); H3.sit(c3);
   await until(() => L3.lobbyData && L3.lobbyData.tables.some((t) => t.code === c3), 2000, 'table listed');
   const M = rogue('Mallory', 'table-' + c3);
-  const spam = setInterval(() => { M.raw.send({ t: 'hb', epoch: 999, backup: 'Mallory' }); M.raw.send({ t: 'host', epoch: 999, backup: 'Mallory' }); M.raw.send({ t: 'handover', epoch: 999, to: 'Mallory' }); }, 15);
   G3.sit(c3);
   await until(() => G3.state && humans(H3.state).length === 2, 3000, 'first guest');
   K3.sit(c3);
   await until(() => K3.state && humans(H3.state).length === 3, 3000, 'second guest');
+  // (someone who types a bare code has nothing to tell hosts apart by, so the impostor starts once these two are seated)
+  const spam = setInterval(() => { M.raw.send({ t: 'hb', epoch: 999, backup: 'Mallory' }); M.raw.send({ t: 'host', epoch: 999, backup: 'Mallory' }); M.raw.send({ t: 'handover', epoch: 999, to: 'Mallory' }); }, 15);
   await sleep(300);
   assert.equal(H3.session.hosting, true);
   assert.ok(!H3.errors.some((e) => e.code === 'moved'));                     // the real host was not talked into stepping down
@@ -276,7 +281,7 @@ for (const text of ['', 'abc', 'pusoy', 'x'.repeat(55), 'y'.repeat(56), 'z'.repe
   ok('a copied table code does not get a second row in live tables');
 
   // the real host drops: only the successor it named (the next player) is followed
-  H3.session.send({ t: 'start' });
+  [H3, G3, K3, L3].forEach((x) => x.session.send({ t: 'ready' }));
   await until(() => K3.state.phase === 'playing', 2000, 'deal');
   [G3, K3, L3].forEach((b) => b.autoplay());
   await sleep(120);
@@ -306,7 +311,7 @@ for (const text of ['', 'abc', 'pusoy', 'x'.repeat(55), 'y'.repeat(56), 'z'.repe
 {
   const core = TableCore.create({ code: 'ABCD', name: 'T', rounds: 3, turnSecs: 30, bots: 'hard', aids: true }, 0);
   core.join('k' + 'a'.repeat(40), { name: 'Ana' }, 0); core.join('not-a-pid', { name: '<i>Bo</i>' }, 0);
-  core.act('k' + 'a'.repeat(40), { t: 'start' }, 0);
+  core.startMatch(0);
   const copy = JSON.parse(JSON.stringify(core.s));
   const good = P2P.cleanSnapshot(copy, 'ABCD');
   assert.ok(good);
@@ -321,6 +326,87 @@ for (const text of ['', 'abc', 'pusoy', 'x'.repeat(55), 'y'.repeat(56), 'z'.repe
   assert.equal(P2P.cleanSnapshot(short, 'ABCD'), null);
   assert.equal(P2P.cleanSnapshot({ seats: 'x' }, 'ABCD'), null);
   ok('a table copy with cards that do not add up is refused');
+}
+
+// ---- 15. watching a full table, and taking a seat when one opens ------------------
+{
+  const names = ['Wa', 'Wb', 'Wc', 'Wd'], seats = names.map((x, i) => browser(x, i));
+  const host4 = seats[0], Lw = browser('Lobbyist', 4), V = browser('Viewer', 5), V2 = browser('Second', 5);
+  Lw.openLobby(); host4.openLobby();
+  host4.lobby.send({ t: 'create', o: { name: 'Packed', pub: true, rounds: 1, turnSecs: 30, botMs: [4, 8], readyMs: 60 } });
+  await until(() => host4.go); const c4 = host4.go; host4.lobby.close(); host4.sit(c4);
+  await until(() => host4.state);
+  for (const b of seats.slice(1)) { b.sit(c4); await until(() => b.state, 3000, b.name + ' seated'); }
+  await until(() => humans(host4.state).length === 4, 3000, 'four seated');
+  V.session = V.net.online(c4, V.profile, V.h);                                   // asks for a seat, finds none
+  await until(() => V.state && V.session.watching, 3000, 'a full table to turn into watching');
+  assert.equal(V.state.you, -1); assert.deepEqual(V.state.hand, []);
+  assert.ok(V.errors.some((e) => e.code === 'note' && /watching/.test(e.msg)));
+  V2.session = V2.net.online(c4, V2.profile, V2.h, { watch: true });               // or come in as a watcher on purpose
+  await until(() => V2.state && V2.state.you === -1, 3000, 'second watcher');
+  await until(() => host4.state.watchers === 2 && Lw.lobbyData.tables.some((t) => t.code === c4 && t.watchers === 2), 3000, 'watcher count');
+  assert.equal(humans(host4.state).length, 4);                                     // watchers hold no seat
+  ok('a full table is watched instead of refused; watchers are counted and see no hand');
+
+  seats.forEach((b) => b.session.send({ t: 'ready' }));
+  await until(() => V.state.phase === 'playing', 3000, 'the deal to reach the watchers');
+  assert.deepEqual(V.state.hand, []); assert.deepEqual(V.state.seen, []);
+  assert.ok(V.state.seats.every((x) => x.n === 13));
+  V.session.send({ t: 'play', cards: [0] }); V.session.send({ t: 'react', e: 1 });   // a watcher cannot act
+  const flat = JSON.stringify(V.state);
+  await sleep(120);
+  assert.ok(!V.evs.some((e) => e.k === 'react'));
+  assert.ok(!/"hand":\[\d/.test(flat));
+  V.session.sit();                                                                   // no seat free yet
+  await until(() => V.errors.some((e) => /just taken/.test(e.msg)), 2000, 'a polite no');
+  assert.equal(V.session.watching, true);
+  ok('watchers follow the game but cannot play, react or see cards; asking for a taken seat is refused politely');
+
+  seats.forEach((b) => b.autoplay());
+  const quitter = seats[3], qSeat = quitter.state.you;
+  quitter.auto = null; quitter.session.close();
+  await until(() => V.state.seats[qSeat].bot, 3000, 'a seat to open');
+  V.session.sit();
+  await until(() => V.state.you === qSeat && !V.session.watching, 3000, 'the watcher to sit down');
+  assert.ok(V.state.phase !== 'playing' || V.state.hand.length > 0 || V.state.seats[qSeat].n === 0);
+  await until(() => host4.state.watchers === 1, 2000, 'one watcher left');
+  ok('when a player leaves, a watcher takes the open seat and its cards');
+
+  // the host drops: the watcher follows the table to its new host
+  const hSeat = host4.state.you;
+  host4.auto = null; host4.session.kill(); vanish(host4.name);
+  await until(() => V2.state.seats[hSeat].bot && V2.status === 'online', 5000, 'the watcher to follow the new host');
+  assert.equal(V2.session.watching, true); assert.equal(V2.state.you, -1);
+  ok('a watcher follows the table when it changes host');
+  [...seats, V, V2].forEach((b) => { b.auto = null; try { b.session.kill(); } catch (e) { /* gone */ } vanish(b.name); });
+}
+
+// ---- 16. ready-up, reactions and rematch across the network ----------------------
+{
+  const Ra = browser('Rita', 0), Rb = browser('Rob', 1);
+  Ra.openLobby();
+  Ra.lobby.send({ t: 'create', o: { name: 'Again', pub: false, rounds: 1, turnSecs: 30, botMs: [3, 6], readyMs: 400 } });
+  await until(() => Ra.go); const c5 = Ra.go; Ra.lobby.close(); Ra.sit(c5);
+  await until(() => Ra.state); Rb.sit(c5);
+  await until(() => Rb.state && humans(Ra.state).length === 2, 3000, 'two seated');
+  Rb.session.send({ t: 'ready' });
+  await until(() => Ra.state.seats[Rb.state.you].ready && Ra.state.readyAt > 0, 2000, 'a ready vote to show');
+  assert.equal(Ra.state.phase, 'waiting'); assert.equal(Ra.state.seats[Ra.state.you].ready, false);
+  Rb.session.send({ t: 'react', e: 8, to: Ra.state.you });
+  await until(() => Ra.evs.some((e) => e.k === 'react' && e.e === 8 && e.to === Ra.state.you), 2000, 'a reaction to arrive');
+  Rb.session.send({ t: 'react', e: 'x' }); Rb.session.send({ t: 'react', e: 500 });
+  Ra.session.send({ t: 'ready' });
+  await until(() => Ra.state.phase === 'playing' && Rb.state.phase === 'playing', 2000, 'the deal once both are ready');
+  [Ra, Rb].forEach((b) => b.autoplay());
+  await until(() => Ra.state.phase === 'matchEnd' && Rb.state.phase === 'matchEnd', 20000, 'the match to end');
+  const champ = Ra.state.result.champ;
+  assert.equal(Ra.state.seats[champ].series, 1);
+  Ra.session.send({ t: 'ready' });                                                  // one player wants a rematch...
+  await until(() => Rb.state.seats[Ra.state.you].ready && Rb.state.readyAt > 0, 2000, 'the rematch vote');
+  await until(() => Rb.state.phase === 'playing' && Rb.state.round === 1, 3000, 'the rematch to start when the timer runs out');
+  assert.equal(Rb.state.seats.reduce((a, x) => a + x.score, 0), 0);
+  ok('ready votes, aimed reactions and a rematch all travel between players');
+  [Ra, Rb].forEach((b) => { b.auto = null; b.session.kill(); vanish(b.name); });
 }
 
 console.log(`p2p: ${n} checks passed`);

@@ -81,7 +81,7 @@ function autoplay(c, label) {
 // cheating attempts before the deal and out of turn
 a.send({ t: 'play', cards: [51] });
 await a.until((m) => m.t === 'error' && m.code === 'move');
-a.send({ t: 'start' });
+a.send({ t: 'ready' }); b.send({ t: 'ready' });          // two players: the deal waits until both are ready
 await a.until((m) => m.t === 'state' && m.s.phase === 'playing');
 await b.until((m) => m.t === 'state' && m.s.phase === 'playing');
 assert.equal(a.state.hand.length, 13); assert.equal(b.state.hand.length, 13);

@@ -51,6 +51,7 @@
       <button class="btn btn-play btn-big" id="btn-solo">Play solo</button>
       <p class="note"><span id="solo-note">3 normal bots, 5 rounds, no clock.</span>
         <button class="link" id="btn-solo-opts">Change</button></p>
+      <p class="note" id="learn-note">New to Pusoy Dos? <button class="link" id="btn-tutorial">Learn it in four short hands</button></p>
       <p class="note" id="motion-note" hidden>Animations are off because this device asks for less motion.
         <button class="link" id="btn-motion-on">Turn them on</button></p>
     </section>
@@ -73,6 +74,7 @@
       <button class="pill" id="btn-board">Hall of fame</button>
       <button class="pill" id="btn-sound-home">Sound on</button>
       <button class="pill" id="btn-fx-home">Effects: full</button>
+      <button class="pill" id="btn-alerts-home">Turn alerts: off</button>
     </footer>
   </div>
 </main>
@@ -116,8 +118,19 @@
       <p class="status" id="status" aria-live="polite"></p>
       <div class="tools">
         <button class="tool" id="btn-sort" title="Sort your cards (S)">Rank</button>
-        <button class="tool" id="btn-chat" hidden>Chat</button>
+        <button class="tool tool-emoji" id="btn-react" aria-label="Send a reaction" title="Send a reaction (R)"><span aria-hidden="true">&#x1F600;</span></button>
+        <button class="tool" id="btn-chat" hidden>Chat<i class="badge" id="chat-badge" hidden></i></button>
       </div>
+    </div>
+    <!-- the tutorial's coach: what to do next, and why -->
+    <div class="coach" id="coach" hidden>
+      <div class="coach-head"><strong id="coach-title"></strong><span class="coach-dots" id="coach-dots" aria-hidden="true"></span></div>
+      <p id="coach-text" aria-live="polite"></p>
+    </div>
+    <!-- shown instead of the hand to someone who is watching without a seat -->
+    <div class="watchbar" id="watchbar" hidden>
+      <p id="watch-text">You’re watching this table.</p>
+      <button class="btn btn-play" id="btn-sit">Take a seat</button>
     </div>
     <div class="combos" id="combos" aria-label="Hands you can play"></div>
     <div class="hand" id="hand" role="group" aria-label="Your cards"></div>
@@ -128,11 +141,23 @@
     </div>
   </footer>
 
+  <!-- reactions: one tap sends an emoji that pops over your seat -->
+  <div class="react-tray" id="react-tray" hidden>
+    <div class="react-grid" id="react-grid"></div>
+    <p class="react-tip">Tap a player to aim one at them.</p>
+  </div>
+
+  <!-- table chat: what was said, quick lines, and your own words -->
   <div class="chat-tray" id="chat-tray" hidden>
-    <div class="quick emoji" id="quick-emoji"></div>
+    <div class="chat-head">
+      <strong>Table chat</strong>
+      <button class="link" id="chat-mute" type="button">Mute chat</button>
+      <button class="icon-btn" id="chat-close" type="button" aria-label="Close chat">&times;</button>
+    </div>
+    <div class="chat-log" id="chat-log" aria-live="polite"></div>
     <div class="quick" id="quick"></div>
     <form id="chat-form" autocomplete="off">
-      <input id="chat-text" type="text" maxlength="80" placeholder="Say something" aria-label="Message">
+      <input id="chat-text" type="text" maxlength="80" placeholder="Say something" aria-label="Message" enterkeyhint="send">
       <button class="btn btn-hint" type="submit">Send</button>
     </form>
   </div>
@@ -204,6 +229,18 @@
   </form>
 </dialog>
 
+<!-- tap a player: who they are, a reaction aimed at them, and mute -->
+<dialog id="dlg-seat" class="sheet sheet-small">
+  <form method="dialog">
+    <div class="seat-card" id="seat-card"></div>
+    <div class="react-grid" id="seat-reacts"></div>
+    <div class="sheet-actions">
+      <button class="btn" id="seat-mute" type="button" hidden>Mute</button>
+      <button class="btn" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="dlg-leave" class="sheet sheet-small">
   <form method="dialog">
     <h2>Leave the table?</h2>
@@ -237,7 +274,10 @@
   <form method="dialog">
     <h2>How to play</h2>
     <div class="rules" id="rules"></div>
-    <div class="sheet-actions"><button class="btn btn-play" value="ok">Got it</button></div>
+    <div class="sheet-actions">
+      <button class="btn" id="btn-tutorial-rules" type="button">Play the tutorial</button>
+      <button class="btn btn-play" value="ok">Got it</button>
+    </div>
   </form>
 </dialog>
 
@@ -245,6 +285,7 @@
 <script src="engine.js"></script>
 <script src="bot.js"></script>
 <script src="table.js"></script>
+<script src="tutorial.js"></script>
 <script src="vendor/trystero-nostr.js"></script>
 <script src="p2p.js"></script>
 <script src="net.js"></script>

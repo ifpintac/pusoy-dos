@@ -13,9 +13,10 @@ The card game, in the browser, arcade style. Play solo against bots, or open a l
 On a phone:
 
 <p>
-  <img src="screenshots/phone-table.png" width="260" alt="Phone: a full hand in two rows with large Pass, Hint and Play buttons">
-  <img src="screenshots/phone-diamond-dos.png" width="260" alt="Phone: the 2 of diamonds effect">
-  <img src="screenshots/phone-new-table.png" width="260" alt="Phone: opening a table and choosing the bot level">
+  <img src="screenshots/phone-table.png" width="200" alt="Phone: a full hand in two rows with large Pass, Hint and Play buttons">
+  <img src="screenshots/phone-diamond-dos.png" width="200" alt="Phone: the 2 of diamonds effect">
+  <img src="screenshots/phone-tutorial.png" width="200" alt="Phone: the tutorial's coach explaining the opening play">
+  <img src="screenshots/phone-new-table.png" width="200" alt="Phone: opening a table and choosing the bot level">
 </p>
 
 No build step and no server. The whole game is the plain HTML, CSS and JavaScript in `public/`, so any static host (GitHub Pages, Cloudflare Pages, Netlify) can serve it for free.
@@ -40,6 +41,11 @@ GitHub gives you an address like `https://yourname.github.io/pusoy-dos/`, which 
 - **If the host leaves,** the table passes to the next player in seat order and a bot takes the old host's seat. This also happens if the host's tab crashes or their connection drops; the others notice within about seven seconds.
 - **If a guest drops,** their seat is held for 45 seconds with a bot covering. Reloading the page puts them back in it.
 - **Quick join** seats you at an open table, or opens one with you as host if there are none.
+- **Ready-up.** Alone at a table you just deal. With company, everyone taps "I'm ready" and the cards are dealt when all are in. Once one player is ready the rest get 20 seconds, so nobody can hold the table up.
+- **Rematch.** After the last round the same vote decides a rematch with the same people. Scores start over, and a player who keeps winning matches gets a streak next to their name.
+- **Watching.** A table with no open seat can be watched: live tables shows Watch instead of Join, and a link to a full table lets you in to watch too. A watcher sees the table but no hands, cannot play, chat or react, and gets "Take a seat" the moment a player leaves.
+- **Reactions and chat.** The 😀 button sends one of ten emoji that pops over your seat. Tap a player to aim one at them and it flies across the table. Chat keeps a log, shows an unread count, and has quick lines. You can mute all chat, or one player from their card.
+- **Your turn, while you were elsewhere.** If the game is in a background tab when your turn starts, the tab title and icon flash, a chime plays, and it chimes once more when half your time is gone. "Turn alerts" on the home screen adds a system notification.
 
 What to know about hosting this way:
 
@@ -60,14 +66,16 @@ Anyone can open the page, join a room and send whatever they like, so the game t
 | Put markup or nonsense on other players' screens (names, chat, table names, cards) | Everything a host or the lobby sends is rebuilt field by field before the page uses it: text is stripped of markup, cards must be real and distinct, numbers are clamped. The page also carries a content security policy, so only the game's own script files can run. |
 | Take someone's seat by replaying their identity | A player's saved key never leaves their browser. A host is shown a token that only works for that one table code, and the table copy kept by the successor stores only a hash of it. |
 | List a fake table under a real table's code | The list keeps one row per code, from whoever listed it first, and joining from the list goes to that host. |
+| Use watching to see cards, or to interfere | A watcher is sent the same view as everyone minus every hand and the played-cards list, and anything a watcher sends other than "let me sit" is ignored. |
+| Send something nasty as a reaction | A reaction is a number from a fixed list of ten, never text. Chat is plain text with markup stripped, 80 characters at most, and can be muted. |
 | Flood a host with messages | Anything beyond 30 messages a second from one connection is dropped, and oversized chat is cut before it is looked at. |
 | Hand a successor a rigged table | The table copy is checked when it is taken over: all 52 cards must be accounted for exactly once, or the handover is refused. |
 
-What this does not fix, because it needs a neutral referee: a host can read the deck, and a host can simply cheat or close the table. The player named as successor can read the deck too. `npm test` includes these attacks.
+What this does not fix, because it needs a neutral referee: a host can read the deck, and a host can simply cheat or close the table. The player named as successor can read the deck too. And someone who types a bare four-letter code has nothing to tell hosts apart by, so they believe the first host to answer; joining from live tables does not have that problem. `npm test` includes these attacks.
 
 ## Optional: a referee server
 
-`server.js` is a small Cloudflare Worker that does the hosting instead of a player: it holds the cards and checks every move, so nobody at the table can peek, tables don't depend on anyone's tab, and the hall of fame works. It fits Cloudflare's free plan.
+`server.js` is a small Cloudflare Worker that does the hosting instead of a player: it holds the cards and checks every move, so nobody at the table can peek, tables don't depend on anyone's tab, and the hall of fame works. It fits Cloudflare's free plan. Ready-up, rematch, reactions and chat work there too; watching a full table is for player-hosted tables only for now.
 
 ```
 npm install
@@ -99,6 +107,19 @@ Pick the level when you start a solo game or open a table. At a table it applies
 | Easy | Forgiving on purpose: it often lets a trick go when it could have played, hangs on to its big cards too long, leads one card at a time even from a pair, rarely spots a five-card hand, and never notices that someone is about to go out. |
 | Normal | Plans its hand into groups, sheds weak cards first, saves 2s and big hands to win the lead back, and blocks a player who is on their last card. |
 | Hard | Normal, plus it counts cards, so it knows exactly which of its plays nobody can beat. It also thinks ahead: it deals the unseen cards out at random a few times, plays each option to the end of the round, and keeps the one that scores best. |
+
+Each bot also has a style, whatever the level, so the table does not play like three copies of one opponent. Tap a bot to see its style; in the first round it is shown under its name.
+
+| Style | Bots | How it shows |
+| --- | --- | --- |
+| Steady | Ace, Dash | The plain plan above. |
+| Rusher | Blitz, Turbo | Almost never passes when it can play, leads its pairs and triples first, and spends 2s freely. |
+| Hoarder | Rook, Nova | Passes much more while its hand is full, sits on its five-card hands and 2s, and opens up once someone is close to going out. |
+| Trickster | Jinx, Pixel | With a full hand it lets a trick go about half the time even when it has a cheap play, to hide what it holds. |
+
+At Normal, a bot that passes when it could have played does so 28% of the time as Steady, 7% as a Rusher, 46% as a Hoarder and 35% as a Trickster. Style costs some strength: against three Steady bots a Rusher wins about 26% of rounds, a Trickster 23% and a Hoarder 20%.
+
+Bots also send the odd reaction in character (about two or three a round between them), and usually answer one aimed at them.
 
 No level cheats. Bots only use what a player at the table could know: their own hand, how many cards everyone holds, and what has been played.
 
@@ -141,7 +162,8 @@ public/engine.js    the rules: what a hand is, what beats what, dealing
 public/bot.js       the computer players, three levels (also powers the Hint button)
 public/manifest.webmanifest, public/icons/   what "Add to Home Screen" uses
 screenshots/        the pictures in this README
-public/table.js     one table: seats, turns, passing, scoring, timers
+public/table.js     one table: seats, turns, passing, scoring, timers, ready-up, reactions
+public/tutorial.js  the four guided lessons and their scripts
 public/config.js    player-hosted (default) or referee server, plus relay/TURN options
 server.js           optional referee server (Cloudflare Worker)
 wrangler.jsonc      Cloudflare config for it
@@ -171,10 +193,14 @@ Tip: add `?fast` to the address to make solo bots play instantly.
 - **Add to Home Screen** (browser menu on Android, Share menu on iPhone) installs the game with its own icon and opens it full screen, without the browser's bars. There is no offline mode: it still loads from the web each time.
 - Held sideways, the hand stays in one row with the buttons beside the status line.
 
+## Learning the game
+
+"Learn it in four short hands" on the home screen (also under How to play) is a tutorial at the real table. A coach says what to do and why, the card to play is highlighted, and only that move is accepted; anything else gets a nudge with the reason. The four lessons are single cards and suits, pairs and three of a kind, five-card hands, and passing and the 2s. Each takes about a minute and ends with you going out. The lessons are plain scripts in `public/tutorial.js`, and `npm test` plays every one through.
+
 ## At the table
 
 - Tap cards to pick them, or press and drag across several.
-- Keyboard: arrow keys move, Space picks a card, Enter plays, P passes, S sorts, Esc clears.
+- Keyboard: arrow keys move, Space picks a card, Enter plays, P passes, S sorts, R opens reactions, Esc clears.
 - Solo games add three practice aids: Hint (H) suggests a play; the chips above your hand (Pair, Straight, Flush...) jump straight to hands you can play; and the card-stack button in the top bar shows every card played so far this round.
 - At live tables those three aids are off, and the played-cards list is never sent to players.
 

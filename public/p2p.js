@@ -24,6 +24,10 @@
  *     derived from it, and the copy of the table kept by the successor holds only
  *     a hash of that token, so neither can be replayed to take someone's seat.
  *   - Message floods are dropped per sender; the lobby lists one row per code.
+ *
+ * Watching: a table with no open seat can be watched. A watcher gets the same view
+ * as everybody else minus any hand (seat -1), cannot act, and can ask for a seat the
+ * moment a bot is sitting in one.
  */
 (function (root) {
   'use strict';
@@ -45,7 +49,7 @@
     linger: 400,         // keep a room open this long after the last user, in case it is reopened
     pinWait: 6000        // coming from the lobby: how long to hold out for the host that listed the table
   };
-  var LIMITS = { tables: 60, perSec: 30, lobbyGap: 400 };
+  var LIMITS = { tables: 60, perSec: 30, lobbyGap: 400, watchers: 12 };
 
   function now() { return Date.now(); }
   function randomCode() {
@@ -73,6 +77,7 @@
   }
   var PHASES = { waiting: 1, playing: 1, roundEnd: 1, matchEnd: 1 };
   function levelOf(v) { return v === 'easy' || v === 'hard' ? v : 'normal'; }
+  function styleOf(v) { return v === 'rusher' || v === 'hoarder' || v === 'trickster' || v === 'steady' ? v : ''; }
   function resultOf(r) {
     if (!r || typeof r !== 'object') return null;
     return {
@@ -85,7 +90,7 @@
 
   /* What a guest shows on screen: a host's "state" message, rebuilt from scratch. */
   function cleanView(s, code) {
-    if (!s || typeof s !== 'object' || !Array.isArray(s.seats) || s.seats.length !== 4 || !PHASES[s.phase] || !isInt(s.you, 0, 3)) return null;
+    if (!s || typeof s !== 'object' || !Array.isArray(s.seats) || s.seats.length !== 4 || !PHASES[s.phase] || !isInt(s.you, -1, 3)) return null;
     var ended = s.phase === 'roundEnd' || s.phase === 'matchEnd', result = ended ? resultOf(s.result) : null;
     if (ended && !result) return null;
     return {
@@ -95,13 +100,15 @@
       seats: s.seats.map(function (x) {
         x = x && typeof x === 'object' ? x : {};
         return { name: P.cleanText(x.name, 16) || 'Player', av: int(x.av, 0, 5, 0), bot: !!x.bot, on: !!x.on, n: int(x.n, 0, 13, 0),
-          passed: !!x.passed, score: int(x.score, -9999, 9999, 0), wins: int(x.wins, 0, 99, 0) };
+          passed: !!x.passed, score: int(x.score, -9999, 9999, 0), wins: int(x.wins, 0, 99, 0),
+          ready: !!x.ready, series: int(x.series, 0, 99, 0), style: x.bot ? styleOf(x.style) : '' };
       }),
-      hand: cardList(s.hand, 13).sort(function (a, b) { return a - b; }),
+      hand: s.you < 0 ? [] : cardList(s.hand, 13).sort(function (a, b) { return a - b; }),
       turn: int(s.turn, -1, 3, -1), table: playOf(s.table),
       trick: (Array.isArray(s.trick) ? s.trick.slice(-2) : []).map(playOf).filter(Boolean).map(function (t) { return { cards: t.cards, by: t.by }; }),
       mustOpen: !!s.mustOpen, aids: false, seen: [],
-      turnAt: num(s.turnAt), nextAt: num(s.nextAt), now: num(s.now) || now(),
+      turnAt: num(s.turnAt), nextAt: num(s.nextAt), readyAt: num(s.readyAt), now: num(s.now) || now(),
+      watchers: int(s.watchers, 0, 99, 0),
       result: result
     };
   }
@@ -118,6 +125,8 @@
       if (k === 'matchEnd') { out.push({ k: k, champ: int(e.champ, 0, 3, 0) }); continue; }
       if (!isInt(e.seat, 0, 3)) continue;
       if (k === 'pass' || k === 'clear' || k === 'away' || k === 'back' || k === 'timeout') out.push({ k: k, seat: e.seat });
+      else if (k === 'ready') out.push({ k: k, seat: e.seat, on: !!e.on });
+      else if (k === 'react') { if (isInt(e.e, 0, (P.REACTIONS || []).length - 1)) out.push({ k: k, seat: e.seat, e: e.e, to: int(e.to, -1, 3, -1) }); }
       else if (k === 'join' || k === 'leave') out.push({ k: k, seat: e.seat, name: P.cleanText(e.name, 16) || 'Player' });
       else if (k === 'chat') { var text = P.cleanText(typeof e.text === 'string' ? e.text.slice(0, 200) : '', 80); if (text) out.push({ k: k, seat: e.seat, text: text }); }
       else if (k === 'play') {
@@ -145,15 +154,17 @@
     return {
       v: 1, code: code, name: P.cleanText(s.name, 28) || 'Table', pub: !!s.pub,
       opts: { rounds: int(o.rounds, 1, 20, 5), turnSecs: int(o.turnSecs, 5, 120, 30), passLock: o.passLock !== false, manualNext: false, aids: false,
-        bots: levelOf(o.bots), think: P.Net ? P.Net.THINK_MS : 30,
+        bots: levelOf(o.bots), think: P.Net ? P.Net.THINK_MS : 30, emotes: o.emotes !== false,
+        readyMs: int(o.readyMs, 20, 120000, 20000),
         botMs: Array.isArray(o.botMs) && isInt(o.botMs[0], 1, 5000) && isInt(o.botMs[1], 1, 5000) ? [o.botMs[0], o.botMs[1]] : [800, 1500] },
       seats: s.seats.map(function (x, k) {
         x = x && typeof x === 'object' ? x : {};
         var bot = !!x.bot || !/^k[0-9a-f]{40}$/.test(x.pid || '');
         var botName = names.indexOf(x.botName) >= 0 ? x.botName : names[k % names.length];
         return { pid: bot ? null : x.pid, name: bot ? botName : (P.cleanText(x.name, 16) || 'Player'), botName: botName, av: int(x.av, 0, 5, 0),
-          bot: bot, on: false, awayAt: 0, afk: 0, chatAt: 0 };
+          bot: bot, on: false, awayAt: 0, afk: 0, chatAt: 0, ready: false, reactAt: 0 };
       }),
+      series: four(s.series, function (v) { return int(v, 0, 99, 0); }), readyAt: 0, reacts: [],
       phase: s.phase, round: int(s.round, 0, 99, 0),
       scores: four(s.scores, function (v) { return int(v, -9999, 9999, 0); }),
       wins: four(s.wins, function (v) { return int(v, 0, 99, 0); }),
@@ -170,6 +181,8 @@
   function cleanAct(m) {
     if (!m || typeof m !== 'object') return null;
     if (m.t === 'start' || m.t === 'next' || m.t === 'pass') return { t: m.t };
+    if (m.t === 'ready') return { t: 'ready', on: m.on !== false };
+    if (m.t === 'react') return isInt(m.e, 0, 31) ? { t: 'react', e: m.e, to: isInt(m.to, 0, 3) ? m.to : -1 } : null;
     if (m.t === 'play') return Array.isArray(m.cards) && m.cards.length >= 1 && m.cards.length <= 5 ? { t: 'play', cards: m.cards.slice(0, 5) } : null;
     if (m.t === 'chat') return typeof m.text === 'string' ? { t: 'chat', text: m.text.slice(0, 200) } : null;
     return null;
@@ -246,7 +259,7 @@
       code: s.code, name: P.cleanText(s.name, 28) || 'Table', pub: true,
       phase: phases[s.phase] ? s.phase : 'waiting',
       round: Math.max(0, Math.min(99, s.round | 0)), rounds: Math.max(1, Math.min(99, s.rounds | 0)),
-      bots: s.bots === 'easy' || s.bots === 'hard' ? s.bots : 'normal',
+      bots: s.bots === 'easy' || s.bots === 'hard' ? s.bots : 'normal', watchers: int(s.watchers, 0, 99, 0),
       seats: s.seats.map(function (x) { return x && typeof x === 'object' ? { name: P.cleanText(x.name, 16) || 'Player', av: Math.max(0, Math.min(5, x.av | 0)) } : null; })
     };
   }
@@ -351,7 +364,7 @@
         var free = NAMES.filter(function (n) { for (var j in tables) if (tables[j].s.name === n) return false; return true; });
         pendingHost[code] = {
           name: P.cleanText(o.name, 28) || (free.length ? free : NAMES)[Math.floor(Math.random() * (free.length || NAMES.length))],
-          pub: o.pub !== false, rounds: o.rounds, turnSecs: o.turnSecs || 30, passLock: o.passLock !== false, botMs: o.botMs, bots: o.bots
+          pub: o.pub !== false, rounds: o.rounds, turnSecs: o.turnSecs || 30, passLock: o.passLock !== false, botMs: o.botMs, bots: o.bots, readyMs: o.readyMs
         };
         h.onGo(code);
       }
@@ -381,6 +394,7 @@
       var ch = takeover ? takeover.ch : open('table-' + code);
       var core, epoch, peers = {}, seen = {}, backup = null, snapKey = '', timer = 0, dead = false, lastSum = '', lob = null;
       var appointed = {};                     // every peer this host ever named as its successor
+      var watchers = {};                      // peers looking on without a seat: peer -> last heard from
       var allow = limiter(LIMITS.perSec), allowWho = limiter(2);
 
       if (takeover) {
@@ -397,7 +411,7 @@
         core.resume(t0);
       } else {
         core = Core.create({ code: code, name: opts.name, pub: opts.pub, rounds: opts.rounds, turnSecs: opts.turnSecs, passLock: opts.passLock, botMs: opts.botMs, aids: false,
-          bots: opts.bots, think: P.Net ? P.Net.THINK_MS : 30 }, now());
+          bots: opts.bots, think: P.Net ? P.Net.THINK_MS : 30, readyMs: opts.readyMs }, now());
         core.join(myPid, profile, now());
         epoch = 1;
       }
@@ -413,16 +427,22 @@
       }
       function announce(force) {
         if (!lob || dead) return;
-        var sum = core.summary(), key = JSON.stringify(sum);
+        var sum = core.summary(); sum.watchers = Object.keys(watchers).length;
+        var key = JSON.stringify(sum);
         if (force || key !== lastSum) { lastSum = key; lob.send({ t: 'tbl', s: sum }); }
       }
       function flush() {
         if (dead) return;
-        var t = now(), ev = core.drain(), p, seat;
+        var t = now(), ev = core.drain(), p, seat, v, looking = Object.keys(watchers).length;
         for (p in peers) {
           seat = core.seatOf(peers[p]);
           if (seat < 0) { ch.send({ t: 'error', code: 'idle', msg: 'You were away too long, so a bot took your seat.' }, p); delete peers[p]; continue; }
-          ch.send({ t: 'state', s: core.view(seat, t), ev: ev }, p);
+          v = core.view(seat, t); v.watchers = looking;
+          ch.send({ t: 'state', s: v, ev: ev }, p);
+        }
+        if (looking) {                          // everyone watching gets the same hand-less view
+          v = core.view(-1, t); v.watchers = looking;
+          for (p in watchers) ch.send({ t: 'state', s: v, ev: ev }, p);
         }
         core.s.outbox = [];
         seat = core.seatOf(myPid);
@@ -431,7 +451,8 @@
           h.onError('You were away too long, so a bot took your seat.', 'idle');
           return;
         }
-        h.onState(core.view(seat, t), ev);
+        v = core.view(seat, t); v.watchers = looking;
+        h.onState(v, ev);
         var b = pickBackup(), key = b + ':' + core.s.seq + ':' + core.s.turnAt + ':' + core.s.nextAt;
         if (b !== backup) { backup = b; if (b) appointed[b] = 1; ch.send({ t: 'hb', epoch: epoch, backup: backup }); }
         if (b && key !== snapKey) { snapKey = key; ch.send({ t: 'snap', epoch: epoch, s: core.s, hostPid: myPid }, b); }
@@ -448,13 +469,20 @@
         delete peers[peer]; delete seen[peer];
         core.setOffline(pid, now()); flush();
       }
-      ch.on.leave = dropped;
+      ch.on.leave = function (peer) { if (watchers[peer]) { delete watchers[peer]; flush(); } dropped(peer); };
       ch.on.msg = function (m, peer) {
         if (dead || !m || typeof m !== 'object' || !peer || !allow(peer)) return;
         var pid = peers[peer], r;
         if (pid) seen[peer] = now();
+        if (watchers[peer]) watchers[peer] = now();
         if (m.t === 'ping') return;
-        if (m.t === 'join') {
+        if (m.t === 'watch') {                       // look on without a seat
+          if (pid || watchers[peer]) return;
+          if (Object.keys(watchers).length >= LIMITS.watchers) { ch.send({ t: 'error', code: 'full', msg: 'That table is full and so is the rail around it.' }, peer); return; }
+          watchers[peer] = now(); flush();
+        } else if (m.t === 'unwatch') {
+          if (watchers[peer]) { delete watchers[peer]; flush(); }
+        } else if (m.t === 'join') {
           if (!isToken(m.key)) return;
           pid = pidOf(m.key);
           if (pid === myPid) { ch.send({ t: 'error', code: 'replaced', msg: 'This table is already open in another tab or device.' }, peer); return; }
@@ -465,6 +493,7 @@
           }
           r = core.join(pid, { name: typeof m.name === 'string' ? m.name.slice(0, 40) : '', av: m.av }, now());
           if (r.error) { ch.send({ t: 'error', code: 'full', msg: 'That table is full.' }, peer); return; }
+          delete watchers[peer];
           peers[peer] = pid; flush();
         } else if (m.t === 'act' && pid) {
           var move = cleanAct(m.m);
@@ -489,6 +518,9 @@
         ch.send({ t: 'hb', epoch: epoch, backup: backup });
         var t = now();                         // a player whose tab died silently stops pinging
         for (var p in peers) if (t - (seen[p] || 0) > timing.hostLost) dropped(p);
+        var gone = false;
+        for (p in watchers) if (t - watchers[p] > timing.hostLost) { delete watchers[p]; gone = true; }
+        if (gone) flush();
       }, timing.heartbeat);
       var again = setInterval(function () { announce(true); }, timing.announce);
       if (core.s.pub) {
@@ -531,9 +563,16 @@
     }
 
     /* ---------- a seat at someone else's table ---------- */
-    function guest(code, profile, h) {
+    /* `opts.watch`: look on without taking a seat. A player who finds the table full
+     * ends up watching too, and can sit() as soon as a bot is in one of the seats. */
+    function guest(code, profile, h, opts) {
       var ch = open('table-' + code);
       var token = tokenOf(profile, code);
+      var watching = !!(opts && opts.watch), sitting = false;
+      function knock() {                      // introduce ourselves to the host: for a seat, or just to look
+        if (watching && !sitting) ch.send({ t: 'watch' }, hostId);
+        else ch.send({ t: 'join', key: token, name: profile.name, av: profile.av }, hostId);
+      }
       var pin = pins[code] || null;           // came from the lobby: the peer that listed this table
       var hostId = null, lastHost = null, heir = null, epoch = 0, askedEpoch = -1, lastBeat = 0, backupId = null, snap = null;
       var started = now(), lostAt = 0, dead = false, live = false, role = null;
@@ -560,7 +599,7 @@
         var wasLost = !!lostAt;
         lastBeat = now(); lostAt = 0; backupId = typeof m.backup === 'string' ? m.backup : null;
         // sit down with a new host, or check back in after a scare
-        if (askedEpoch !== epoch || wasLost) { askedEpoch = epoch; ch.send({ t: 'join', key: token, name: profile.name, av: profile.av }, hostId); }
+        if (askedEpoch !== epoch || wasLost) { askedEpoch = epoch; knock(); }
       }
       function hostLost() {
         if (dead || lostAt) return;
@@ -587,6 +626,7 @@
           var v = cleanView(m.s, code);
           if (!v) return;
           if (!live) { live = true; h.onStatus('online'); }
+          if (v.you >= 0) { watching = false; sitting = false; }
           h.onState(v, cleanEvents(m.ev));
         } else if (m.t === 'snap') snap = m;
         else if (m.t === 'handover') {
@@ -594,7 +634,13 @@
           else { hostId = null; heir = typeof m.to === 'string' ? m.to : null; lostAt = now(); live = false; h.onStatus('reconnecting'); }
         } else if (m.t === 'error') {
           var text = P.cleanText(typeof m.msg === 'string' ? m.msg.slice(0, 300) : '', 160) || 'Something went wrong at the table.';
-          if (FATAL[m.code] === 1) fail(text, m.code);
+          if (m.code === 'full' && !watching) {          // no seat free: stay and watch instead of being turned away
+            watching = true; sitting = false; knock();
+            h.onError('That table is full, so you’re watching. Take a seat as soon as one opens.', 'note');
+          } else if (m.code === 'full' && sitting) {     // somebody else got to the open seat first
+            sitting = false;
+            h.onError('That seat was just taken.', 'net');
+          } else if (FATAL[m.code] === 1) fail(text, m.code);
           else h.onError(text, m.code === 'move' ? 'move' : 'net');
         }
       };
@@ -614,28 +660,35 @@
 
       return {
         get hosting() { return !!role; },
+        get watching() { return !role && watching; },
+        /* A watcher asks for a seat. It works when a bot is sitting in one. */
+        sit: function () {
+          if (role || dead || !watching || sitting) return;
+          if (!hostId) return h.onError('Reconnecting… try again in a second.', 'net');
+          sitting = true; knock();
+        },
         send: function (msg) {
           if (role) return role.send(msg);
-          if (dead) return;
+          if (dead || watching) return;
           if (!hostId) return h.onError('Reconnecting… try again in a second.', 'net');
           ch.send({ t: 'act', m: msg }, hostId);
         },
         close: function () {
           if (role) return role.close();
-          if (hostId) ch.send({ t: 'leave' }, hostId);
+          if (hostId) ch.send({ t: watching ? 'unwatch' : 'leave' }, hostId);
           stop();
         },
-        bye: function () { if (!role && hostId && !dead) ch.send({ t: 'bye' }, hostId); },
+        bye: function () { if (!role && hostId && !dead) ch.send({ t: watching ? 'unwatch' : 'bye' }, hostId); },
         kill: function () { if (role) role.kill(); dead = true; clearInterval(watch); },
         others: function () { return role ? role.others() : 0; }
       };
     }
 
     /* Host a table this player just opened, or join one by its code. */
-    function online(code, profile, h) {
+    function online(code, profile, h, opts) {
       var o = pendingHost[code];
       delete pendingHost[code];
-      var s = o ? host(code, o, profile, h) : guest(code, profile, h);
+      var s = o ? host(code, o, profile, h) : guest(code, profile, h, opts);
       s.solo = false;
       return s;
     }
@@ -645,7 +698,7 @@
 
   var shared = null;
   P.P2P = {
-    timing: timing,
+    timing: timing, limits: LIMITS,
     create: create,
     sha256: sha256, tokenOf: tokenOf, cleanView: cleanView, cleanEvents: cleanEvents, cleanSnapshot: cleanSnapshot,
     /* True when this browser can do player-hosted tables at all. */

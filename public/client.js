@@ -1,6 +1,6 @@
 /* Pusoy Dos — the screen: home, table, cards, sounds, and the arcade polish.
  * It draws whatever view the table sends (solo or live) and sends back
- * { t: 'play' | 'pass' | 'start' | 'next' | 'chat' } messages. */
+ * { t: 'play' | 'pass' | 'start' | 'next' | 'ready' | 'react' | 'chat' } messages. */
 (function () {
   'use strict';
   var P = window.Pusoy, E = P.Engine, Bot = P.Bot, Net = P.Net, FX = P.FX;
@@ -9,7 +9,12 @@
   var COLORS = ['#EF6257', '#4DA6E0', '#F5A742', '#5FC592', '#A58AE6', '#EF8FB3'];
   var COLOR_NAMES = ['Coral', 'Blue', 'Amber', 'Green', 'Purple', 'Pink'];
   var QUICK = ['Nice!', 'Ouch!', 'Wow!', 'Hurry up!', 'No way!', 'GG'];
-  var EMOJI = ['👍', '😂', '😱', '🔥', '😭', '👏'];
+  var STYLE = {      // how each bot plays; see bot.js
+    steady: ['Steady', 'Plays a balanced game.'],
+    rusher: ['Rusher', 'Hates passing and throws big cards early.'],
+    hoarder: ['Hoarder', 'Sits on pairs and 2s, then unloads late.'],
+    trickster: ['Trickster', 'Passes early to hide a strong hand.']
+  };
   var SHOUT = { straight: 'Straight!', flush: 'Flush!', fullhouse: 'Full house!', quads: 'Four of a kind!', straightflush: 'Straight flush!' };
   var CHIP = { pair: 'Pair', triple: 'Triple', straight: 'Straight', flush: 'Flush', fullhouse: 'Full house', quads: 'Four', straightflush: 'Str. flush' };
   var CHIP_ORDER = ['pair', 'triple', 'straight', 'flush', 'fullhouse', 'quads', 'straightflush'];
@@ -22,7 +27,7 @@
     for (var i = 0; i < a.length; i++) s += ('0' + a[i].toString(16)).slice(-2);
     return s;
   }
-  var me = { name: '', av: Math.floor(Math.random() * 6), key: randomKey(), sound: true, sort: 'rank', rounds: 5, passLock: true, bots: 'normal', lite: false, fx: 'auto' };
+  var me = { name: '', av: Math.floor(Math.random() * 6), key: randomKey(), sound: true, sort: 'rank', rounds: 5, passLock: true, bots: 'normal', lite: false, fx: 'auto', alerts: false, muteChat: false, learned: false };
   try {
     var saved = JSON.parse(localStorage.getItem('pusoy2') || 'null');
     if (saved && typeof saved === 'object') for (var k in me) if (saved[k] !== undefined && typeof saved[k] === typeof me[k]) me[k] = saved[k];
@@ -110,6 +115,16 @@
       note(130, 0.6, 'sine', 0.4, 0, 30); noise(0.35, 0.45, 0, 700); noise(0.12, 0.3, 0, 3200);
       [523, 659, 784, 1047, 1319, 1568, 2093].forEach(function (f, i) { note(f, 0.1, 'square', 0.055, 0.08 + i * 0.055); });
       note(1047, 0.5, 'square', 0.05, 0.5); note(1568, 0.5, 'square', 0.045, 0.5); note(2093, 0.55, 'triangle', 0.08, 0.5);
+    },
+    react: function () { note(880, 0.05, 'square', 0.04); note(1320, 0.08, 'square', 0.04, 0.05); },
+    splat: function () { noise(0.12, 0.3, 0, 900); note(150, 0.12, 'sine', 0.2, 0, 60); },
+    ready: function () { note(659, 0.07, 'triangle', 0.1); note(880, 0.1, 'triangle', 0.1, 0.07); },
+    // the card that ends the round: a rising wind-up while it hangs in the air...
+    windup: function () { note(240, 0.66, 'sawtooth', 0.04, 0, 1300); note(120, 0.66, 'triangle', 0.09, 0, 520); },
+    // ...and the hit: a deep thump, a crash, and a chord that rings out
+    finish: function () {
+      note(110, 0.55, 'sine', 0.4, 0, 34); noise(0.3, 0.42, 0, 800); noise(0.55, 0.16, 0, 5200);
+      [392, 523, 659, 784].forEach(function (f) { note(f, 0.36, 'square', 0.04, 0.04); });
     },
     win: function () { [523, 659, 784, 1047, 784, 1047, 1319].forEach(function (f, i) { note(f, i > 4 ? 0.3 : 0.11, 'square', 0.06, i * 0.1); }); },
     lose: function () { [392, 330, 262].forEach(function (f, i) { note(f, 0.22, 'triangle', 0.1, i * 0.17); }); }
@@ -200,6 +215,9 @@
     });
 
     $('btn-solo').addEventListener('click', function () { audio(); startSolo(); });
+    $('btn-tutorial').addEventListener('click', function () { audio(); startTutorial(); });
+    $('btn-tutorial-rules').addEventListener('click', function () { audio(); closeDialog($('dlg-rules')); startTutorial(); });
+    $('learn-note').hidden = me.learned;
     $('btn-solo-opts').addEventListener('click', function () { openNew(true); });
     $('btn-quick').addEventListener('click', function () {
       audio();
@@ -222,6 +240,7 @@
     });
     $('tables').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-code]');
+      if (b && b.dataset.watch) { audio(); joinTable(b.dataset.code, { watch: true }); return; }
       if (b) { audio(); joinTable(b.dataset.code); }
     });
     $('btn-rules').addEventListener('click', showRules);
@@ -235,6 +254,8 @@
       me.fx = { full: 'lite', lite: 'off', off: 'full' }[fxMode()]; save(); renderFx();
     });
     $('btn-motion-on').addEventListener('click', function () { me.fx = 'full'; save(); renderFx(); sfx.pick(3); });
+    $('btn-alerts-home').addEventListener('click', toggleAlerts);
+    renderAlerts();
     if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', renderFx);
 
     $('form-new').addEventListener('submit', function (e) {
@@ -311,9 +332,12 @@
       }).join('');
       var when = t.phase === 'waiting' ? 'Waiting to deal' : t.phase === 'matchEnd' ? 'Between matches' : 'Round ' + t.round + ' of ' + t.rounds;
       if (open && t.bots && t.bots !== 'normal') when += ' · ' + botsLabel(t.bots);
+      if (t.watchers) when += ' · ' + t.watchers + ' watching';
       return '<div class="trow"><div><div class="tn">' + esc(t.name) + '</div>' +
         '<div class="ts"><span class="dots">' + dots + '</span>' + when + '</div></div>' +
-        '<button class="btn btn-play" data-code="' + esc(t.code) + '"' + (open ? '' : ' disabled') + '>' + (open ? 'Join' : 'Full') + '</button></div>';
+        (open ? '<button class="btn btn-play" data-code="' + esc(t.code) + '">Join</button>'
+          : Net.mode() === 'p2p' ? '<button class="btn" data-code="' + esc(t.code) + '" data-watch="1">Watch</button>'
+          : '<button class="btn btn-play" disabled>Full</button>') + '</div>';
     }).join('');
   }
 
@@ -407,7 +431,7 @@
         if (code === 'move') { nope(); return toast(msg); }
         if (code === 'net') return toast(msg);
         toast(msg, 4200);
-        if (code === 'note') { if (view) { renderHud(); $('waiting')._sig = ''; renderWaiting(); } return; }
+        if (code === 'note') { if (view) { renderHud(); $('waiting')._sig = ''; renderWaiting(); renderStatus(); } return; }
         if (code === 'moved' && tableCode) return joinTable(tableCode);     // our table carried on under a new host: sit back down
         if (code === 'gone' || code === 'full' || code === 'idle' || code === 'badkey' || code === 'replaced') goHome();
       },
@@ -424,6 +448,9 @@
     dropLobby();
     view = null; sel = []; kb = -1; hints = null; sending = false; shownResultSeq = -1; wasMyTurn = false; conn = 'connecting';
     prevCount = [-1, -1, -1, -1]; legalSeq = -1; legalNow = []; comboAt = {};
+    chatLog = []; unread = 0; muted = {}; wasWatching = false; stopAlert();
+    $('react-tray').hidden = true; $('watchbar').hidden = true; $('game').classList.remove('watching');
+    renderChat();
     $('t-round').textContent = 'Pusoy Dos'; $('t-name').textContent = '';
     $('status').textContent = 'Connecting to the table…'; $('status').className = 'status';
     handEl.innerHTML = ''; handEl._order = []; handEl._nodes = {}; pileEl.innerHTML = ''; $('pile-label').textContent = '';
@@ -444,14 +471,34 @@
     session.send({ t: 'start' });
   }
 
-  function joinTable(code) {
+  /* Four guided hands with a coach, on the real table (see tutorial.js). */
+  function startTutorial() {
+    if (session) { try { session.close(); } catch (e) { /* already closed */ } }
+    enterTable();
+    setHash('');
+    session = P.Tutorial.start(profile(), handlers());
+  }
+  function renderCoach() {
+    var tu = view.tutor, box = $('coach');
+    $('game').classList.toggle('tutoring', !!tu);
+    box.hidden = !tu || tu.done;
+    if (!tu || tu.done) return;
+    $('coach-title').textContent = 'Lesson ' + (tu.lesson + 1) + ': ' + tu.title;
+    var dots = '';
+    for (var i = 0; i < tu.of; i++) dots += '<i class="' + (i < tu.lesson ? 'on' : i === tu.lesson ? 'now' : '') + '"></i>';
+    $('coach-dots').innerHTML = dots;
+    var text = $('coach-text');
+    if (text.textContent !== tu.text) { text.textContent = tu.text; FX.kickClass(box, 'bump'); }
+  }
+
+  function joinTable(code, opts) {
     if (session) { try { session.close(); } catch (e) { /* already closed */ } }
     session = null;
     if (Net.mode() === 'off') { toast(offlineReason()); return; }
     enterTable();
     setHash(code);
     tableCode = code;
-    session = Net.online(code, profile(), handlers());
+    session = Net.online(code, profile(), handlers(), opts);
   }
 
   function goHome() {
@@ -487,6 +534,7 @@
     renderPile(ev, rects, clear);
     renderHand(dealt);
     renderWaiting();
+    renderCoach();
     renderStatus();
     renderResults(ev, first);
     if ($('dlg-seen').open) renderSeen();
@@ -495,13 +543,20 @@
     if (myTurn && !wasMyTurn) {
       sfx.turn(); buzz(20); wave();
       var st = $('status'); st.classList.remove('pop'); void st.offsetWidth; st.classList.add('pop');
-    }
+      alertTurn();
+    } else if (!myTurn) stopAlert();
     wasMyTurn = myTurn;
+    if (wasWatching && !watching()) { toast('You’re in. You took over from a bot.', 3200); sfx.ready(); }
+    wasWatching = watching();
+    if (view.phase === 'matchEnd' && !$('results-wrap').hidden) renderReady();
   }
 
   function isMyTurn() { return !!view && view.phase === 'playing' && view.turn === view.you; }
-  function seatAt(pos) { return (view.you + pos) % 4; }
-  function posOf(seat) { return (seat - view.you + 4) % 4; }
+  /* Someone watching has no seat (you = -1): they see the table from seat 0's side. */
+  function watching() { return !!view && view.you < 0; }
+  function base() { return view.you < 0 ? 0 : view.you; }
+  function seatAt(pos) { return (base() + pos) % 4; }
+  function posOf(seat) { return (seat - base() + 4) % 4; }
   function nameOf(seat) { return seat === view.you ? 'You' : view.seats[seat].name; }
   function seatColor(seat) { return color(view.seats[seat].av); }
   function pileCenter() { var r = fieldEl.getBoundingClientRect(), p = pileEl.getBoundingClientRect(); return { x: r.left + r.width / 2, y: p.top }; }
@@ -513,6 +568,8 @@
     return Math.min(3, p);
   }
 
+  var finale = 0;              // how long the round-end banner should wait for the finishing move, in ms
+
   function react(e) {
     var pos, c, col;
     switch (e.k) {
@@ -520,11 +577,19 @@
         pos = posOf(e.seat); col = seatColor(e.seat);
         var twos = e.cards.filter(function (id) { return id >= 48; }).length, big = e.cards.indexOf(51) >= 0;
         var power = powerOf(e), tier = E.TIER[e.type] || 0;
-        var land = FX.isCalm() ? 0 : big ? 780 : 300 + e.cards.length * 30;
-        if (big && !FX.isCalm()) {                 // the 2 of diamonds hangs in the air first: dim the table, wind up
-          sfx.charge();
+        var out = e.left === 0;                    // the play that empties a hand and ends the round
+        var land = FX.isCalm() ? 0 : big || out ? 780 : 300 + e.cards.length * 30;
+        if ((big || out) && !FX.isCalm()) {        // it hangs in the air first: dim the table, wind up
+          if (big) sfx.charge(); else sfx.windup();
           fieldEl.classList.add('spot');
-          setTimeout(function () { fieldEl.classList.remove('spot'); }, 2300);
+          setTimeout(function () { fieldEl.classList.remove('spot'); }, big ? 2300 : 1500);
+        }
+        if (out && !FX.isCalm()) {
+          trail(e.seat, col);
+          finale = big ? 1900 : 1500;              // the win banner waits for the finishing move (see 'roundEnd')
+          var starEl = seatEls[pos].el;
+          starEl.classList.add('star');            // the winner stays lit while the rest of the table dims
+          setTimeout(function () { starEl.classList.remove('star'); }, 2400);
         }
         setTimeout(function () {
           if (!view) return;
@@ -534,12 +599,16 @@
           FX.ring(c.x, c.y, col, power);
           FX.burst(c.x, c.y, { colors: [col, '#F7F1E3'], count: 8 + power * 10, speed: 200 + power * 110, size: 6 + power * 2, life: 0.5 + power * 0.12 });
           if (big) bigDos(c);
-          else {
+          else if (out) {
+            if (twos) dos(c, twos, false);
+            if (tier) sfx.combo(tier);
+          } else {
             FX.shake(gameEl, power);
             if (twos) dos(c, twos, e.cards.length < 5);
             if (tier) { banner(SHOUT[e.type], 't' + tier); sfx.combo(tier); }
             if (tier >= 4) FX.flash($('flash'), col);
           }
+          if (out) finisher(e.seat, c, col, big);
           if (e.left === 1 && view.phase === 'playing') {
             var sc = FX.center(seatEls[pos].el);
             FX.floatText(sc.x, sc.y - 30, 'Last card!', '#FF8F86'); sfx.last();
@@ -556,20 +625,84 @@
         FX.floatText(c.x, c.y - (pos === 0 ? 34 : -34), pos === 0 ? 'Your lead!' : 'Takes it', seatColor(e.seat));
         break;
       case 'deal': sfx.deal(); dealFx(); break;
-      case 'chat': say(posOf(e.seat), e.text); break;
-      case 'join': if (e.seat !== view.you) toast(e.name + ' joined.'); break;
-      case 'leave': if (e.seat !== view.you) toast(e.name + ' left. ' + view.seats[e.seat].name + ' took the seat.'); break;
+      case 'chat':
+        if (e.seat !== view.you && (me.muteChat || muted[e.seat])) break;
+        say(posOf(e.seat), e.text);
+        logChat({ name: nameOf(e.seat), c: seatColor(e.seat), text: e.text });
+        break;
+      case 'react': if (!muted[e.seat] || e.seat === view.you) showReaction(e); break;
+      case 'ready': if (e.on && e.seat !== view.you) sfx.ready(); break;
+      case 'join': muted[e.seat] = false; if (e.seat !== view.you) { toast(e.name + ' joined.'); logChat({ sys: e.name + ' joined.' }); } break;
+      case 'leave':
+        muted[e.seat] = false;
+        if (e.seat !== view.you) { toast(e.name + ' left. ' + view.seats[e.seat].name + ' took the seat.'); logChat({ sys: e.name + ' left.' }); }
+        break;
       case 'away': if (e.seat !== view.you) toast(view.seats[e.seat].name + ' lost connection.'); break;
       case 'timeout': if (e.seat === view.you) toast('Time ran out, so your turn was played for you.'); break;
       case 'roundEnd':
         var mine = e.winner === view.you, last = view.phase === 'matchEnd';
+        // after the finishing move has landed (and after "Diamond dos!" has had its moment, if that was the last card)
+        var after = finale || 520;
+        finale = 0;
         setTimeout(function () {
           if (!view) return;
-          if (mine) { banner('You win!', 'win long'); sfx.win(); FX.confetti(null, last ? 220 : 130); buzz([30, 40, 30, 40, 80]); }
-          else { banner(view.seats[e.winner].name + ' wins', 't2 long'); sfx.lose(); }
-        }, FX.isCalm() ? 0 : 520);
+          if (mine) {
+            banner('You win!', 'win long'); sfx.win(); FX.confetti(null, last ? 220 : 130); buzz([30, 40, 30, 40, 80]);
+            var gain = view.result && view.result.delta[view.you], at = FX.center(seatEls[0].el);
+            if (gain > 0) setTimeout(function () { FX.floatText(at.x + 30, at.y - 34, '+' + gain, '#F5A742', true); }, 350);
+          } else { banner(view.seats[e.winner].name + ' wins', 't2 long'); sfx.lose(); }
+        }, FX.isCalm() ? 0 : after);
         break;
     }
+  }
+
+  /* ---------- the finishing move: the play that empties a hand ---------- */
+
+  /* While the last cards hang in the air, sparks trail up from whoever threw them. */
+  function trail(seat, col) {
+    var from = FX.center(seat === view.you ? handEl : seatEls[posOf(seat)].el), to = pileCenter();
+    [0.25, 0.5, 0.75].forEach(function (k, i) {
+      setTimeout(function () {
+        FX.burst(from.x + (to.x - from.x) * k, from.y + (to.y - 40 - from.y) * k, { colors: [col, '#F7F1E3'], count: 5, speed: 90, size: 5, life: 0.45, gravity: 120 });
+      }, 60 + i * 90);
+    });
+  }
+
+  /* The landing: the table is hit hard enough to knock the other players back. */
+  function finisher(seat, c, col, big) {
+    var f = fieldEl.getBoundingClientRect(), winPos = posOf(seat);
+    if (!big) {                                    // the 2 of diamonds brings its own thunder
+      sfx.finish(); buzz([20, 40, 130]);
+      FX.flash($('flash'), col);
+      FX.shake(gameEl, 3);
+      FX.kickClass(fieldEl, 'punch');
+      FX.rays(fieldEl, c.x - f.left, c.y - f.top, col);
+      FX.burst(c.x, c.y, { colors: [col, '#F7F1E3', '#F5A742'], count: 46, speed: 520, size: 9, life: 0.9, up: 140 });
+      banner('Finish!', 'fin');
+      $('banner').style.setProperty('--c-win', col);
+    }
+    FX.ring(c.x, c.y, col, 3);
+    setTimeout(function () { FX.ring(c.x, c.y, '#F7F1E3', 3); }, 100);
+    setTimeout(function () { FX.ring(c.x, c.y, col, 2); }, 220);
+    // everyone still holding cards takes the hit; the winner's plate pops
+    var push = [[0, 12, 2], [-16, 0, -5], [0, -13, 3], [16, 0, 5]];
+    seatEls.forEach(function (s, pos) {
+      var b = s.body;
+      if (pos === winPos) { FX.kickClass(b, 'champ'); return; }
+      b.style.setProperty('--kx', push[pos][0] + 'px'); b.style.setProperty('--ky', push[pos][1] + 'px'); b.style.setProperty('--kr', push[pos][2] + 'deg');
+      b.style.animationDelay = (60 + pos * 45) + 'ms';
+      FX.kickClass(b, 'hit');
+    });
+    var star = FX.center(seatEls[winPos].el);
+    setTimeout(function () { FX.burst(star.x, star.y, { colors: [col, '#F5A742', '#F7F1E3'], count: 22, speed: 280, size: 7, life: 0.8, up: 90 }); }, 160);
+    // what it cost each of them, floating up from their seat
+    var res = view.result;
+    if (res) seatEls.forEach(function (s, pos) {
+      var lost = -res.delta[seatAt(pos)];
+      if (pos === winPos || !(lost > 0)) return;
+      var at = FX.center(s.el);
+      setTimeout(function () { if (view) FX.floatText(at.x, at.y + (pos === 2 ? 34 : -30), '\u2212' + lost, '#FF8F86'); }, 260 + pos * 70);
+    });
   }
 
   /* Any 2 landing: gold sparks, and a shout when it's a single, pair or triple of them. */
@@ -607,16 +740,189 @@
     handEl.classList.remove('nope'); void handEl.offsetWidth; handEl.classList.add('nope');
   }
 
+  /* ---------- chat ---------- */
+
+  var chatLog = [], unread = 0, muted = {}, wasWatching = false;
+
+  function logChat(line) {
+    chatLog.push(line);
+    if (chatLog.length > 60) chatLog.shift();
+    if ($('chat-tray').hidden && !line.sys) unread++;
+    renderChat();
+  }
+  function renderChat() {
+    var log = $('chat-log'), badge = $('chat-badge');
+    log.innerHTML = chatLog.length ? chatLog.map(function (m) {
+      return m.sys ? '<p class="sys">' + esc(m.sys) + '</p>' : '<p><b style="--c:' + m.c + '">' + esc(m.name) + '</b>' + esc(m.text) + '</p>';
+    }).join('') : '<p class="none">Nobody has said anything yet.</p>';
+    log.scrollTop = log.scrollHeight;
+    badge.hidden = !unread; badge.textContent = unread > 9 ? '9+' : unread;
+    $('chat-mute').textContent = me.muteChat ? 'Unmute chat' : 'Mute chat';
+  }
+  function toggleChat(open) {
+    var tray = $('chat-tray');
+    tray.hidden = open === undefined ? !tray.hidden : !open;
+    if (!tray.hidden) { unread = 0; $('react-tray').hidden = true; renderChat(); }
+  }
+
+  /* ---------- reactions ---------- */
+
+  function reactGrid(el) {
+    el.innerHTML = P.REACTIONS.map(function (r, i) { return '<button type="button" data-e="' + i + '">' + r + '</button>'; }).join('');
+  }
+  /* An emoji pops over whoever sent it, or flies across the table at whoever it was aimed at. */
+  function showReaction(e) {
+    var emoji = P.REACTIONS[e.e];
+    if (!emoji) return;
+    var pos = posOf(e.seat), from = FX.center(seatEls[pos].el);
+    var el = document.createElement('div');
+    el.className = 'reaction'; el.textContent = emoji;
+    document.body.appendChild(el);
+    if (e.to >= 0 && e.to !== e.seat && el.animate && !FX.isCalm()) {
+      var tpos = posOf(e.to), to = FX.center(seatEls[tpos].el);
+      var dx = to.x - from.x, dy = to.y - from.y, lift = Math.min(120, 40 + Math.abs(dx) * 0.25);
+      el.style.left = from.x + 'px'; el.style.top = from.y + 'px';
+      sfx.react();
+      el.animate([
+        { transform: 'translate(0,0) scale(.5) rotate(0deg)', opacity: 0.6, offset: 0 },
+        { transform: 'translate(' + dx * 0.5 + 'px,' + (dy * 0.5 - lift) + 'px) scale(1.25) rotate(200deg)', opacity: 1, offset: 0.5 },
+        { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1) rotate(380deg)', opacity: 1, offset: 1 }
+      ], { duration: 560, easing: 'cubic-bezier(.4,.1,.6,1)', fill: 'forwards' }).onfinish = function () {
+        var body = seatEls[tpos].body, away = [[0, 8], [-8, 0], [0, -8], [8, 0]][tpos];
+        sfx.splat(); if (e.to === view.you) buzz(30);
+        FX.burst(to.x, to.y, { colors: [e.e === 8 ? '#D8473E' : e.e === 9 ? '#EF8FB3' : '#F5A742', '#F7F1E3'], count: 12, speed: 220, size: 6, life: 0.5 });
+        body.style.setProperty('--kx', away[0] + 'px'); body.style.setProperty('--ky', away[1] + 'px'); body.style.setProperty('--kr', (tpos % 2 ? 4 : -4) + 'deg');
+        FX.kickClass(body, 'nudge');
+        el.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1) rotate(380deg)', opacity: 1 }, { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(2.2) rotate(380deg)', opacity: 0 }],
+          { duration: 320, easing: 'ease-out', fill: 'forwards' }).onfinish = function () { el.remove(); };
+      };
+      return;
+    }
+    el.style.left = from.x + (pos === 1 ? 30 : pos === 3 ? -30 : 0) + 'px';
+    el.style.top = from.y + (pos === 2 ? 44 : pos === 0 ? -36 : -6) + 'px';
+    el.classList.add('pop');
+    sfx.react();
+    setTimeout(function () { el.remove(); }, FX.isCalm() ? 1100 : 1700);
+  }
+  function sendReaction(i, to) {
+    if (!session || !view || watching()) return;
+    session.send(to >= 0 ? { t: 'react', e: i, to: to } : { t: 'react', e: i });
+  }
+
+  /* Tap a player: who they are, reactions aimed at them, and mute. */
+  var seatOpen = -1;
+  function openSeat(seat) {
+    if (!view) return;
+    var s = view.seats[seat], mine = seat === view.you;
+    if (mine) { $('react-tray').hidden = !$('react-tray').hidden; toggleChat(false); return; }
+    seatOpen = seat;
+    var info = s.bot ? '<span class="tag">Bot</span>' + (STYLE[s.style] ? '<span class="tag">' + STYLE[s.style][0] + '</span>' + STYLE[s.style][1] : '')
+      : (s.series > 1 ? plural(s.series, 'match') + ' won in a row. ' : '') + (s.on ? plural(s.wins, 'round') + ' won this match.' : 'Away right now; a bot is covering.');
+    $('seat-card').innerHTML = '<span class="av" style="--c:' + color(s.av) + '">' + initial(s.name) + '</span><div><h2>' + esc(s.name) + '</h2><p>' + info + '</p></div>';
+    $('seat-reacts').hidden = watching();
+    var mute = $('seat-mute');
+    mute.hidden = s.bot || session.solo;
+    mute.textContent = muted[seat] ? 'Unmute ' + s.name : 'Mute ' + s.name;
+    openDialog($('dlg-seat'));
+  }
+
+  /* ---------- "it's your turn" when you have looked away ---------- */
+
+  var alertTimer = 0, baseTitle = document.title, iconEl = null, baseIcon = '';
+  var ALERT_ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F5A742'/%3E%3Cpath d='M32 12l14 20-14 20-14-20z' fill='%23D8473E'/%3E%3Ccircle cx='50' cy='14' r='10' fill='%23EF6257' stroke='%23131D28' stroke-width='4'/%3E%3C/svg%3E";
+  function away() { return document.hidden || !document.hasFocus(); }
+  function alertTurn(quiet) {
+    if (!away() || alertTimer || !view) return;
+    alertNudged = false;
+    var on = false, where = session && session.solo ? '' : ' at ' + view.name;
+    iconEl = iconEl || document.querySelector('link[rel="icon"]');
+    baseIcon = baseIcon || (iconEl ? iconEl.href : '');
+    var flip = function () { on = !on; document.title = on ? '▶ Your turn!' : baseTitle; if (iconEl) iconEl.href = on ? ALERT_ICON : baseIcon; };
+    flip();
+    alertTimer = setInterval(flip, 1000);
+    if (quiet) return;                                      // you left mid-turn: you know, the title is enough
+    sfx.turn(); setTimeout(sfx.turn, 400);                  // a second chime, in case the first was missed
+    try {
+      if (me.alerts && window.Notification && Notification.permission === 'granted') {
+        var n = new Notification('Your turn' + where, { body: view.table ? 'Beat the ' + view.table.name + ' or pass.' : 'You have the lead.', tag: 'pusoy-turn', icon: baseIcon });
+        n.onclick = function () { window.focus(); n.close(); };
+        alertNote = n;
+      }
+    } catch (e) { /* notifications are not available here */ }
+  }
+  var alertNote = null, alertNudged = false;
+  /* Half the clock gone and still away: one more chime. */
+  function nudgeAlert(left, total) {
+    if (!alertTimer || alertNudged || left > total / 2) return;
+    alertNudged = true; sfx.turn(); setTimeout(sfx.turn, 300);
+  }
+  function stopAlert() {
+    if (alertTimer) { clearInterval(alertTimer); alertTimer = 0; document.title = baseTitle; if (iconEl && baseIcon) iconEl.href = baseIcon; }
+    if (alertNote) { try { alertNote.close(); } catch (e) { /* already gone */ } alertNote = null; }
+  }
+  function renderAlerts() {
+    var b = $('btn-alerts-home'), can = !!window.Notification;
+    b.hidden = !can;
+    var on = can && me.alerts && Notification.permission === 'granted';
+    b.textContent = 'Turn alerts: ' + (on ? 'on' : 'off');
+  }
+  function toggleAlerts() {
+    if (!window.Notification) return;
+    if (me.alerts && Notification.permission === 'granted') { me.alerts = false; save(); renderAlerts(); return; }
+    var done = function (p) {
+      me.alerts = p === 'granted'; save(); renderAlerts();
+      toast(me.alerts ? 'You’ll get a notification when it’s your turn and the game is in the background.' : 'Notifications are blocked for this site. The tab title and a chime will still tell you.', 4200);
+    };
+    if (Notification.permission === 'granted') return done('granted');
+    try { var r = Notification.requestPermission(done); if (r && r.then) r.then(done, function () { done('denied'); }); } catch (e) { done('denied'); }
+  }
+
+  /* ---------- ready-up and rematch ---------- */
+
+  function readyState() {
+    var here = 0, ready = 0;
+    view.seats.forEach(function (s) { if (!s.bot && s.on) { here++; if (s.ready) ready++; } });
+    return { here: here, ready: ready, mine: view.you >= 0 && view.seats[view.you].ready, left: view.readyAt ? Math.max(0, Math.ceil((view.readyAt - Date.now() - clockSkew) / 1000)) : 0 };
+  }
+  function readyLine(r, verb) {
+    if (!r.ready) return '';
+    var wait = r.here - r.ready;
+    return (wait ? 'Waiting for ' + plural(wait, 'player') + '. ' : '') + (view.readyAt ? verb + ' in ' + r.left + ' s' + (wait ? ' either way.' : '.') : '');
+  }
+  /* The rematch line and button on the final results sheet. */
+  function renderReady() {
+    var line = $('res-ready'), btn = $('results').querySelector('button[data-act="ready"]');
+    if (!line || !view || view.phase !== 'matchEnd') return;
+    var r = readyState();
+    line.textContent = readyLine(r, 'Rematch');
+    if (btn) { btn.textContent = r.mine ? 'Ready! Tap to cancel' : r.ready ? 'Rematch (' + r.ready + ' of ' + r.here + ' in)' : 'Rematch'; btn.classList.toggle('btn-play', !r.mine); }
+    [].forEach.call($('results').querySelectorAll('.res-rows li'), function (li) {
+      var s = view.seats[+li.dataset.seat], tick = li.querySelector('.rdy');
+      if (tick) tick.hidden = !(s && !s.bot && s.ready);
+    });
+  }
+
   /* ---------- top bar ---------- */
 
   function renderHud() {
-    $('t-round').textContent = view.phase === 'waiting' ? 'Get ready' : 'Round ' + view.round + '/' + view.rounds;
-    $('t-name').textContent = view.name + (session.solo ? ' • ' + botsLabel(view.bots) : session.hosting ? ' • you’re hosting' : '');
+    $('t-round').textContent = view.tutor ? 'Lesson ' + (view.tutor.lesson + 1) + '/' + view.tutor.of : view.phase === 'waiting' ? 'Get ready' : 'Round ' + view.round + '/' + view.rounds;
+    $('t-name').textContent = view.name + (view.tutor ? '' : session.solo ? ' • ' + botsLabel(view.bots) : (session.hosting ? ' • you’re hosting' : '') +
+      (watching() ? ' • watching' : view.watchers ? ' • ' + view.watchers + ' watching' : ''));
     var inv = $('btn-invite');
     inv.hidden = !!session.solo;
     inv.textContent = view.code;
     inv.title = 'Copy the invite link';
-    $('btn-chat').hidden = !!session.solo;
+    var look = watching();
+    $('btn-chat').hidden = !!session.solo || look;
+    $('btn-react').hidden = look || !!view.tutor;
+    $('game').classList.toggle('watching', look);
+    $('watchbar').hidden = !look;
+    if (look) {
+      var free = view.seats.some(function (s) { return s.bot; });
+      $('watch-text').textContent = 'You’re watching' + (view.watchers > 1 ? ' with ' + plural(view.watchers - 1, 'other') : '') + '. ' + (free ? 'A seat is open.' : 'A seat is yours as soon as one opens.');
+      $('btn-sit').disabled = !free;
+      $('react-tray').hidden = true; toggleChat(false);
+    }
     // Hint, the quick-pick chips and the cards-played tracker are practice aids: solo only.
     var aids = !!view.aids;
     $('btn-seen').hidden = !aids || view.phase === 'waiting';
@@ -646,24 +952,29 @@
     view.seats.forEach(function (x, k) { if (x.score > best) { best = x.score; top = k; } });
     for (var pos = 0; pos < 4; pos++) {
       var i = seatAt(pos), s = view.seats[i], body = seatEls[pos].body;
-      var turn = playing && view.turn === i;
+      var turn = playing && view.turn === i, isMe = pos === 0 && view.you >= 0;
       var cls = 'plate' + (turn ? ' turn' : '') + (playing && s.passed ? ' passed' : '') + (!s.on ? ' off' : '') +
-        (playing && s.n === 1 && pos !== 0 ? ' last' : '') + (playing && s.n <= 3 && pos !== 0 ? ' low' : '') + (turn && view.turnAt ? ' timed' : '');
+        (playing && s.n === 1 && !isMe ? ' last' : '') + (playing && s.n <= 3 && !isMe ? ' low' : '') + (turn && view.turnAt ? ' timed' : '');
       var sub, subCls = '';
       var waitingBot = view.phase === 'waiting' && s.bot;
-      if (view.phase === 'waiting') sub = s.bot ? 'Open seat' : pos === 0 ? 'You' : 'Ready';
+      var votes = !session.solo && (view.phase === 'waiting' || view.phase === 'matchEnd');
+      if (view.phase === 'waiting' && s.bot) sub = 'Open seat';
+      else if (votes && !s.bot) { sub = s.ready ? 'Ready' : isMe ? 'You' : 'Not ready'; subCls = s.ready ? ' rdy' : ''; }
+      else if (view.phase === 'waiting') sub = isMe ? 'You' : 'Ready';
       else if (!s.on) sub = 'Away';
       else if (playing && s.passed) sub = 'Passed';
+      // round one, nobody has points yet: say how each bot likes to play instead of "0 pts"
+      else if (s.bot && STYLE[s.style] && view.round === 1 && playing && !s.score && !view.tutor) { sub = STYLE[s.style][0]; subCls = ' style'; }
       else { sub = signed(s.score) + ' pts'; subCls = s.score > 0 ? ' up' : s.score < 0 ? ' down' : ''; }
-      var bumped = playing && pos !== 0 && prevCount[i] >= 0 && prevCount[i] !== s.n;
+      var bumped = playing && !isMe && prevCount[i] >= 0 && prevCount[i] !== s.n;
       prevCount[i] = playing ? s.n : -1;
       body.className = cls;
       body.style.setProperty('--c', waitingBot ? '#5C7284' : color(s.av));
       body.innerHTML =
         '<span class="avatar">' + (waitingBot ? '+' : initial(s.name)) + (i === top && view.phase !== 'waiting' ? '<i class="crown" title="In the lead"></i>' : '') + '</span>' +
         '<span class="who"><span class="nm">' + esc(waitingBot ? 'Bot' : s.name) + '</span><span class="sub' + subCls + '">' + sub + '</span></span>' +
-        (pos !== 0 && playing ? '<span class="cnt' + (bumped ? ' bump' : '') + '" title="' + plural(s.n, 'card') + ' left">' + s.n + '</span>' : '') +
-        (pos !== 0 ? '<span class="tbar"><i></i></span>' : '');
+        (!isMe && playing ? '<span class="cnt' + (bumped ? ' bump' : '') + '" title="' + plural(s.n, 'card') + ' left">' + s.n + '</span>' : '') +
+        (!isMe ? '<span class="tbar"><i></i></span>' : '');
     }
     tickClock();
   }
@@ -720,7 +1031,7 @@
       var age = want.length - 1 - idx;
       node.className = 'play' + (age === 1 ? ' old' : age >= 2 ? ' older' : '');
       node.style.zIndex = idx + 1;
-      if (fresh && age === 0 && played && playKey({ by: played.seat, cards: played.cards }) === key) flyIn(node, p, rects);
+      if (fresh && age === 0 && played && playKey({ by: played.seat, cards: played.cards }) === key) flyIn(node, p, rects, played.left === 0);
     });
     var label = $('pile-label');
     if (view.phase === 'playing' && view.table) {
@@ -729,10 +1040,11 @@
     } else label.textContent = '';
   }
 
-  function flyIn(node, play, rects) {
+  function flyIn(node, play, rects, finish) {
     if (!node.animate || FX.isCalm()) return;
     var mine = play.by === view.you;
     var src = seatEls[posOf(play.by)].el.getBoundingClientRect();
+    var count = node.children.length, grow = count >= 5 ? 1.42 : count >= 3 ? 1.62 : 1.9;
     [].forEach.call(node.children, function (card, i) {
       var to = card.getBoundingClientRect(), from = mine && rects[card.dataset.id];
       var fx = from ? from.left + from.width / 2 : src.left + src.width / 2;
@@ -748,6 +1060,19 @@
           { transform: 'translate(0,-70px) scale(2.3) rotate(366deg)', opacity: 1, offset: 0.8 },
           { transform: 'translate(0,5px) scale(.88) rotate(360deg)', offset: 0.93 },
           { transform: 'translate(0,0) scale(1) rotate(360deg)', opacity: 1, offset: 1 }
+        ], { duration: 840, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'backwards' }).onfinish = function () { card.style.zIndex = ''; };
+        return;
+      }
+      if (finish) {
+        // the cards that end the round: they rise over the table, fan out and hang for a beat, then come down together
+        var fan = i - (count - 1) / 2;
+        card.style.zIndex = 9;
+        card.animate([
+          { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + sc + ') rotate(' + (mine ? 0 : -30) + 'deg)', opacity: mine ? 1 : 0.4, offset: 0 },
+          { transform: 'translate(' + fan * 16 + 'px,-56px) scale(' + grow + ') rotate(' + (fan * 9 - 10) + 'deg)', opacity: 1, offset: 0.42 },
+          { transform: 'translate(' + fan * 19 + 'px,-68px) scale(' + (grow + 0.12) + ') rotate(' + fan * 9 + 'deg)', opacity: 1, offset: 0.8 },
+          { transform: 'translate(0,6px) scale(.86) rotate(0deg)', offset: 0.93 },
+          { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1, offset: 1 }
         ], { duration: 840, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'backwards' }).onfinish = function () { card.style.zIndex = ''; };
         return;
       }
@@ -828,6 +1153,7 @@
     // cards in front, so every card stays wide enough to tap. Once the cards fit
     // comfortably side by side they close up into one row and the table gets the room back.
     var two = handBox.phone && n > 1 && (W - cw) / (n - 1) < cw * 0.6;
+    var wanted = view && view.tutor && Array.isArray(view.tutor.want) && isMyTurn() ? view.tutor.want : [];      // the tutorial points at cards
     var back = two ? Math.ceil(n / 2) : n;
     var drop = cw * 0.73;                                   // how far the front row sits below the back row
     handEl.classList.toggle('rows2', two);
@@ -842,6 +1168,7 @@
       c.style.transform = 'translate(' + (x0 + k * step) + 'px,' + y + 'px) rotate(' + (t * (two ? 3 : 9 * fan * (n / 13))) + 'deg)' + (on ? ' scale(1.04)' : '');
       c.style.zIndex = i + 1;
       c.classList.toggle('sel', on);
+      c.classList.toggle('want', !on && wanted.indexOf(id) >= 0);
       c.classList.toggle('kb', i === kb);
       c.setAttribute('aria-pressed', on);
     });
@@ -902,7 +1229,7 @@
     if (!view) return;
     var st = $('status'), play = $('btn-play'), pass = $('btn-pass'), hint = $('btn-hint');
     var myTurn = isMyTurn(), text = '', cls = '', canPlay = false, label = 'Play', selType = '';
-    var my = view.seats[view.you];
+    var my = view.seats[view.you] || { passed: false };
     var stuck = myTurn && !!view.table && !legal().length;
 
     if (conn === 'reconnecting' || conn === 'connecting') { text = 'Reconnecting…'; cls = 'bad'; }
@@ -926,7 +1253,7 @@
     play.classList.toggle('ready', canPlay && !sending);
     handEl.classList.toggle('ok', canPlay);
     pass.disabled = !(myTurn && view.table) || sending;
-    pass.classList.toggle('nudge', stuck && !sending);
+    pass.classList.toggle('nudge', (stuck || (myTurn && !!view.tutor && view.tutor.want === 'pass')) && !sending);
     hint.disabled = !myTurn || sending;
     renderCombos(selType);
   }
@@ -991,14 +1318,20 @@
     var w = $('waiting');
     if (view.phase !== 'waiting') { w.hidden = true; return; }
     var humans = view.seats.filter(function (s) { return !s.bot; }).length;
-    var sig = view.code + humans + (session.hosting ? 'h' : '') + view.bots;
+    var r = readyState(), look = watching(), alone = r.here <= 1 && !look;
+    var sig = view.code + humans + (session.hosting ? 'h' : '') + view.bots + '|' + view.seats.map(function (s) { return s.ready ? 1 : 0; }).join('') + r.here + look + r.mine;
     w.hidden = false;
-    if (w._sig === sig) return;
+    var line = w.querySelector('.readyline');
+    if (w._sig === sig) { if (line) line.textContent = readyLine(r, 'Dealing'); return; }
     w._sig = sig;
+    // Alone at the table you just deal. With company everyone says when they are ready.
+    var go = look ? '' : alone ? '<button class="btn btn-play btn-big" id="btn-deal">Deal</button>'
+      : '<button class="btn ' + (r.mine ? '' : 'btn-play ') + 'btn-big" id="btn-ready">' + (r.mine ? 'Ready!' : 'I’m ready') + '</button>' +
+        '<p class="readyline">' + esc(readyLine(r, 'Dealing')) + '</p>';
     w.innerHTML = '<h2>' + esc(view.name) + '</h2>' +
-      '<p>' + (humans === 4 ? 'Full table. Deal whenever you’re ready.' :
+      '<p>' + (look ? 'You’re watching. The players are getting ready.' : humans === 4 ? 'Full table. ' + (r.mine ? 'Waiting for the others.' : 'Say when you’re ready.') :
         plural(humans, 'player') + ' in. ' + botsLabel(view.bots) + ' fill the open seats' + (session.solo ? '.' : ', and anyone who joins later takes over a bot.')) + '</p>' +
-      '<button class="btn btn-play btn-big" id="btn-deal">Deal</button>' +
+      go +
       (session.solo ? '' : '<div class="invite"><span>Code <strong>' + esc(view.code) + '</strong>' + (view.pub ? ', listed in live tables' : ', invite only') + '</span><button class="link" id="btn-copy">Share link</button></div>') +
       (session.hosting ? '<p class="hostnote">You’re hosting, so keep this tab open. If you leave, the next player takes over.</p>' : '');
   }
@@ -1018,10 +1351,11 @@
       wrap.hidden = false;
       var go = $('results').querySelector('.btn-play') || $('results').querySelector('.btn');
       if (go) go.focus({ preventScroll: true });
-    }, justEnded && !first && !FX.isCalm() ? 2100 : justEnded && !first ? 600 : 0);
+    }, justEnded && !first && !FX.isCalm() ? 3000 : justEnded && !first ? 600 : 0);
   }
 
   function fillResults() {
+    if (view.tutor) return fillLesson();
     var r = view.result, match = view.phase === 'matchEnd';
     var title, order = [0, 1, 2, 3];
     if (match) {
@@ -1034,15 +1368,20 @@
     var rows = order.map(function (i, rank) {
       var s = view.seats[i], left = r.hands[i];
       var detail = i === r.winner ? 'Out of cards' : plural(left.length, 'card') + ' left' + (left.length >= 13 ? ', tripled' : left.length >= 10 ? ', doubled' : '') + mini(left);
-      return '<li class="' + (i === (match ? r.champ : r.winner) ? 'win' : '') + '" style="--i:' + rank + '">' +
+      return '<li data-seat="' + i + '" class="' + (i === (match ? r.champ : r.winner) ? 'win' : '') + '" style="--i:' + rank + '">' +
         '<span class="rk">' + (rank + 1) + '</span>' +
         '<span class="av" style="--c:' + color(s.av) + '">' + initial(s.name) + '</span>' +
-        '<span class="rn">' + esc(s.name) + (i === view.you ? ' (you)' : '') + '<span class="rl">' + detail + '</span></span>' +
+        '<span class="rn">' + esc(s.name) + (i === view.you ? ' (you)' : '') +
+          '<span class="rl">' + (match && !s.bot ? '<span class="rdy" hidden>✓ ready · </span>' : '') +
+          (match && s.series > 1 ? '<span class="streak">' + s.series + ' in a row · </span>' : '') + detail + '</span></span>' +
         '<span class="rd ' + (r.delta[i] > 0 ? 'up' : r.delta[i] < 0 ? 'down' : '') + '" data-to="' + r.delta[i] + '">0</span>' +
         '<span class="rt" data-from="' + (s.score - r.delta[i]) + '" data-to="' + s.score + '">' + signed(s.score - r.delta[i]) + '</span></li>';
     }).join('');
     var actions;
-    if (match) actions = '<button class="btn" data-act="leave">Leave</button><button class="btn btn-play" data-act="start">Play again</button>';
+    var crowd = !session.solo && view.seats.filter(function (x) { return !x.bot && x.on; }).length > 1;
+    if (watching()) actions = '<button class="btn" data-act="leave">Leave</button>' + (view.seats.some(function (x) { return x.bot; }) ? '<button class="btn btn-play" data-act="sit">Take a seat</button>' : '');
+    else if (match && crowd) actions = '<button class="btn" data-act="leave">Leave</button><button class="btn btn-play" data-act="ready">Rematch</button>';
+    else if (match) actions = '<button class="btn" data-act="leave">Leave</button><button class="btn btn-play" data-act="start">Play again</button>';
     else if (view.manualNext) actions = '<button class="btn" data-act="leave">Leave</button><button class="btn btn-play" data-act="next">Next round</button>';
     else actions = '<button class="btn" data-act="leave">Leave table</button>';
     $('results').innerHTML =
@@ -1051,13 +1390,30 @@
       '<div class="res-head"><span></span><span></span><span></span><span>Round</span><span>Total</span></div>' +
       '<ol class="res-rows">' + rows + '</ol>' +
       (!match && !view.manualNext ? '<div class="res-next" id="res-next"><i></i></div><p class="res-next-label" id="res-next-label"></p>' : '') +
+      (match && crowd ? '<p class="res-ready" id="res-ready"></p>' : '') +
       '<div class="sheet-actions">' + actions + '</div>';
+    renderReady();
     [].forEach.call($('results').querySelectorAll('.res-rows li'), function (li, i) {
       var d = li.querySelector('.rd'), t = li.querySelector('.rt');
       countUp(d, 0, +d.dataset.to, 500, 260 + i * 110);
       countUp(t, +t.dataset.from, +t.dataset.to, 500, 760 + i * 110);
     });
     tickClock();
+  }
+
+  /* The card between lessons: what you just learned, and what is next. */
+  function fillLesson() {
+    var tu = view.tutor, bar = '';
+    for (var i = 0; i < tu.of; i++) bar += '<i class="' + (i <= tu.lesson ? 'on' : '') + '"></i>';
+    if (tu.last && !me.learned) { me.learned = true; save(); $('learn-note').hidden = true; }
+    $('results').innerHTML = '<div class="lesson-card">' +
+      '<h2 class="res-title">' + (tu.last ? 'You’re ready!' : 'Lesson ' + (tu.lesson + 1) + ' done') + '</h2>' +
+      '<div class="steps">' + bar + '</div>' +
+      '<p>' + esc(tu.recap) + '</p>' +
+      (tu.last ? '<p>That is the whole game. In a real game you get 13 cards, the Hint button suggests a play, and the chips above your hand show what you can make.</p>' : '') +
+      '</div><div class="sheet-actions">' +
+      (tu.last ? '<button class="btn" data-act="leave">Home</button><button class="btn btn-play" data-act="solo">Play solo</button>'
+        : '<button class="btn" data-act="again">Again</button><button class="btn btn-play" data-act="next">Next lesson</button>') + '</div>';
   }
 
   /* ---------- cards played so far ---------- */
@@ -1089,8 +1445,9 @@
       if (view.phase === 'playing' && view.turn === i && view.turnAt && view.turnSecs) {
         var left = Math.max(0, view.turnAt - now), p = Math.min(1, left / (view.turnSecs * 1000));
         var hurry = left < 6000;
-        if (pos === 0) {
+        if (pos === 0 && view.you >= 0) {
           mineOn = true;
+          nudgeAlert(left, view.turnSecs * 1000);
           bar.style.setProperty('--p', p.toFixed(3));
           bar.classList.toggle('hurry', hurry);
           if (hurry && left > 0) {
@@ -1104,6 +1461,7 @@
       }
     }
     bar.classList.toggle('on', mineOn);
+    if (view.readyAt) { renderWaiting(); renderReady(); }       // the countdown to the deal or the rematch
     var nx = $('res-next');
     if (nx && view.nextAt) {
       var rem = Math.max(0, view.nextAt - now);
@@ -1159,7 +1517,7 @@
     fieldEl.addEventListener('click', function (e) {
       if (e.target.closest('button')) return;
       if (sel.length) { sel = []; hintAt = -1; sfx.drop(); layoutHand(); renderStatus(); }
-      $('chat-tray').hidden = true;
+      $('chat-tray').hidden = true; $('react-tray').hidden = true;
     });
     $('combos').addEventListener('click', function (e) {
       var b = e.target.closest('.combo'); if (b) doCombo(b.dataset.type);
@@ -1186,28 +1544,63 @@
     $('dlg-leave').addEventListener('close', function () { if (this.returnValue === 'ok') goHome(); this.returnValue = ''; });
     $('waiting').addEventListener('click', function (e) {
       if (e.target.id === 'btn-deal') { audio(); session.send({ t: 'start' }); }
+      if (e.target.id === 'btn-ready') { audio(); sfx.ui(); session.send({ t: 'ready', on: !readyState().mine }); }
       if (e.target.id === 'btn-copy') invite();
     });
     $('results').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-act]'); if (!b) return;
       if (b.dataset.act === 'leave') goHome();
+      else if (b.dataset.act === 'sit') { sfx.ui(); session.sit(); }
+      else if (b.dataset.act === 'solo') { sfx.ui(); startSolo(); }
+      else if (b.dataset.act === 'ready') { sfx.ui(); session.send({ t: 'ready', on: !readyState().mine }); }
       else { sfx.ui(); session.send({ t: b.dataset.act }); }
     });
 
-    $('btn-chat').addEventListener('click', function () { var tray = $('chat-tray'); tray.hidden = !tray.hidden; });
+    $('btn-chat').addEventListener('click', function () { toggleChat(); });
+    $('chat-close').addEventListener('click', function () { toggleChat(false); });
+    $('chat-mute').addEventListener('click', function () { me.muteChat = !me.muteChat; save(); renderChat(); toast(me.muteChat ? 'Chat from other players is hidden.' : 'Chat is back on.'); });
     $('quick').innerHTML = QUICK.map(function (q) { return '<button type="button">' + q + '</button>'; }).join('');
-    $('quick-emoji').innerHTML = EMOJI.map(function (q) { return '<button type="button">' + q + '</button>'; }).join('');
-    var quickSend = function (e) {
+    $('quick').addEventListener('click', function (e) {
       if (e.target.tagName !== 'BUTTON' || !session) return;
-      session.send({ t: 'chat', text: e.target.textContent }); $('chat-tray').hidden = true;
-    };
-    $('quick').addEventListener('click', quickSend);
-    $('quick-emoji').addEventListener('click', quickSend);
-    $('chat-form').addEventListener('submit', function (e) {
+      session.send({ t: 'chat', text: e.target.textContent });
+    });
+    $('chat-form').addEventListener('submit', function (e) {       // the panel stays open, so a conversation can carry on
       e.preventDefault();
       var input = $('chat-text'), text = input.value.trim();
-      if (text && session) { session.send({ t: 'chat', text: text }); input.value = ''; $('chat-tray').hidden = true; }
+      if (text && session) { session.send({ t: 'chat', text: text }); input.value = ''; }
     });
+
+    // reactions: the picker by your hand, or tap a player to aim one
+    reactGrid($('react-grid')); reactGrid($('seat-reacts'));
+    $('btn-react').addEventListener('click', function () { audio(); $('react-tray').hidden = !$('react-tray').hidden; toggleChat(false); });
+    $('react-grid').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-e]'); if (!b) return;
+      sendReaction(+b.dataset.e, -1); $('react-tray').hidden = true;
+    });
+    $('seat-reacts').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-e]'); if (!b) return;
+      sendReaction(+b.dataset.e, seatOpen); closeDialog($('dlg-seat'));
+    });
+    $('seat-mute').addEventListener('click', function () {
+      if (seatOpen < 0 || !view) return;
+      muted[seatOpen] = !muted[seatOpen];
+      toast(muted[seatOpen] ? view.seats[seatOpen].name + ' is muted for you.' : view.seats[seatOpen].name + ' is unmuted.');
+      closeDialog($('dlg-seat'));
+    });
+    seatEls.forEach(function (s, pos) {
+      s.el.addEventListener('click', function (e) {
+        if (!view || !e.target.closest('.plate')) return;
+        audio(); e.stopPropagation();
+        openSeat(seatAt(pos));
+      });
+    });
+    $('btn-sit').addEventListener('click', function () { audio(); sfx.ui(); if (session && session.sit) session.sit(); });
+
+    // "it's your turn" stops nagging as soon as you look
+    window.addEventListener('focus', stopAlert);
+    window.addEventListener('blur', function () { if (isMyTurn()) alertTurn(true); });        // left in the middle of your turn
+    document.addEventListener('visibilitychange', function () { if (document.hidden && isMyTurn()) alertTurn(true); });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) stopAlert(); });
 
     window.addEventListener('resize', function () { handBox = null; if (view) layoutHand(); });
     setInterval(tickClock, 250);
@@ -1230,7 +1623,8 @@
       else if (key === 'p') doPass();
       else if (key === 'h') doHint();
       else if (key === 's') $('btn-sort').click();
-      else if (e.key === 'Escape') { sel = []; kb = -1; hintAt = -1; layoutHand(); renderStatus(); $('chat-tray').hidden = true; }
+      else if (key === 'r' && !watching()) $('btn-react').click();
+      else if (e.key === 'Escape') { sel = []; kb = -1; hintAt = -1; layoutHand(); renderStatus(); $('chat-tray').hidden = true; $('react-tray').hidden = true; }
     });
   }
 

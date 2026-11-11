@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import '../public/engine.js';
 import '../public/bot.js';
 import '../public/table.js';
+import '../public/tutorial.js';
 const { Engine: E, Bot, TableCore } = globalThis.Pusoy;
 
 const R = { '3': 0, '4': 1, '5': 2, '6': 3, '7': 4, '8': 5, '9': 6, '10': 7, J: 8, Q: 9, K: 10, A: 11, '2': 12 };
@@ -115,7 +116,7 @@ t('table: opening play, pass lock, trick clear, scoring', () => {
   const core = TableCore.create({ code: 'TEST', rounds: 2, turnSecs: 30 }, 0);
   ['a', 'b', 'c', 'd'].forEach((p) => assert.ok(core.join(p, { name: p }, 0).seat >= 0));
   assert.equal(core.join('e', { name: 'e' }, 0).error, 'full');
-  core.act('a', { t: 'start' }, 0);
+  ['a', 'b', 'c', 'd'].forEach((p) => core.act(p, { t: 'ready' }, 0));          // four players: the deal waits for all of them
   const s = core.s;
   const pid = (i) => s.seats[i].pid;
   // rig the deal so the test is deterministic
@@ -239,5 +240,151 @@ t('easy bots are forgiving: lowest card first, cheapest answer, and they often l
   for (let i = 0; i < 400; i++) if (Bot.choose(pair).length === 1) singles++;
   assert.ok(singles > 180 && singles < 300, 'led a single ' + singles + ' of 400');
 });
+
+t('ready-up: alone you just deal; with company everyone readies, or a timer runs out', () => {
+  const solo = TableCore.create({}, 0); solo.join('a', { name: 'a' }, 0);
+  solo.act('a', { t: 'start' }, 0);
+  assert.equal(solo.s.phase, 'playing');                                   // alone at the table: no vote needed
+
+  const core = TableCore.create({ readyMs: 5000 }, 0);
+  ['a', 'b', 'c'].forEach((p) => core.join(p, { name: p }, 0));
+  core.act('a', { t: 'start' }, 10);                                         // "Deal" with company counts as "I'm ready"
+  assert.equal(core.s.phase, 'waiting');
+  assert.deepEqual(core.view(0, 10).seats.map((x) => x.ready), [true, false, false, true]);   // the bot is always ready
+  assert.equal(core.view(0, 10).readyAt, 5010);
+  core.act('b', { t: 'ready' }, 20);
+  core.act('b', { t: 'ready', on: false }, 30);                              // changed their mind
+  assert.equal(core.view(0, 30).seats[1].ready, false);
+  core.act('b', { t: 'ready' }, 40); core.act('c', { t: 'ready' }, 50);
+  assert.equal(core.s.phase, 'playing');                                     // everyone in: dealt at once
+  assert.ok(core.s.seats.every((x) => !x.ready) && core.s.readyAt === 0);
+
+  const slow = TableCore.create({ readyMs: 5000 }, 0);
+  ['a', 'b'].forEach((p) => slow.join(p, { name: p }, 0));
+  slow.act('a', { t: 'ready' }, 100);
+  assert.equal(slow.nextWake(), 5100);
+  slow.tick(5099); assert.equal(slow.s.phase, 'waiting');
+  slow.tick(5100); assert.equal(slow.s.phase, 'playing');                    // the timer ran out: dealt without waiting for b
+  const left = TableCore.create({ readyMs: 5000 }, 0);
+  ['a', 'b'].forEach((p) => left.join(p, { name: p }, 0));
+  left.act('a', { t: 'ready' }, 0); left.leave('b', 10);
+  assert.equal(left.s.phase, 'playing');                                     // the one holding things up left
+});
+
+t('rematch: scores start over and a winning streak is counted', () => {
+  const core = TableCore.create({ rounds: 1, readyMs: 5000, botMs: [1, 2], emotes: false }, 0);
+  ['a', 'b'].forEach((p) => core.join(p, { name: p }, 0));
+  const playOut = () => { let g = 0; while (core.s.phase === 'playing' && g++ < 600) core.autoMove(core.s.turn, true, 0); };
+  core.act('a', { t: 'ready' }, 0); core.act('b', { t: 'ready' }, 0); playOut();
+  assert.equal(core.s.phase, 'matchEnd');
+  const champ = core.s.result.champ;
+  assert.equal(core.view(0, 0).seats[champ].series, 1);
+  core.act('a', { t: 'ready' }, 0);
+  assert.equal(core.s.phase, 'matchEnd');                                    // one vote is not a rematch yet
+  core.act('b', { t: 'ready' }, 0);
+  assert.equal(core.s.phase, 'playing'); assert.deepEqual(core.s.scores, [0, 0, 0, 0]); assert.equal(core.s.round, 1);
+  playOut();
+  const again = core.s.result.champ;
+  assert.equal(core.s.series[again], again === champ ? 2 : 1);
+  assert.equal(core.s.series.filter((x) => x > 0).length, 1);                // only the current champion has a streak
+  if (!core.s.seats[again].bot) { core.leave(core.s.seats[again].pid, 0); assert.equal(core.s.series[again], 0); }   // and it leaves with them
+});
+
+t('reactions: a number from a fixed list, rate-limited, optionally aimed at a seat; bots answer', () => {
+  const { REACTIONS } = globalThis.Pusoy;
+  assert.ok(REACTIONS.length >= 8);
+  const core = TableCore.create({}, 0); core.join('a', { name: 'a' }, 0); core.join('b', { name: 'b' }, 0); core.drain();
+  assert.ok(core.act('a', { t: 'react', e: 99 }, 1000).error);
+  assert.ok(core.act('a', { t: 'react', e: '<b>' }, 1000).error);
+  core.act('a', { t: 'react', e: 1 }, 1000);
+  core.act('a', { t: 'react', e: 2 }, 1100);                                  // too soon: dropped
+  core.act('a', { t: 'react', e: 8, to: 1 }, 2000);
+  core.act('a', { t: 'react', e: 8, to: 0 }, 3000);                           // aimed at yourself: just a reaction
+  assert.deepEqual(core.drain(), [{ k: 'react', seat: 0, e: 1, to: -1 }, { k: 'react', seat: 0, e: 8, to: 1 }, { k: 'react', seat: 0, e: 8, to: -1 }]);
+  let answered = 0;
+  for (let i = 0; i < 60; i++) {
+    const t0 = 10000 + i * 10000;
+    core.act('a', { t: 'react', e: 8, to: 2 }, t0);                           // a tomato for the bot in seat 2
+    core.drain(); core.tick(t0 + 3000);
+    const back = core.drain().filter((e) => e.k === 'react' && e.seat === 2);
+    assert.ok(back.length <= 1);
+    if (back.length) { answered++; assert.ok(back[0].e >= 0 && back[0].e < REACTIONS.length); }
+  }
+  assert.ok(answered > 25 && answered < 58, 'the bot answered ' + answered + ' of 60');
+});
+
+t('bot styles: each seat has one, and it shows in how often a bot passes', () => {
+  const { BOT_STYLE, BOT_NAMES } = globalThis.Pusoy;
+  assert.deepEqual(new Set(Object.values(BOT_STYLE)), new Set(Bot.STYLES));
+  assert.ok(BOT_NAMES.every((n) => BOT_STYLE[n]));
+  const core = TableCore.create({}, 0); core.join('a', { name: 'a' }, 0);
+  const v = core.view(0, 0);
+  assert.equal(v.seats[0].style, '');                                         // players have no style
+  assert.ok(v.seats.slice(1).every((x) => Bot.STYLES.includes(x.style)));
+  // same spot for all four: a cheap play is available on a low single, nobody is close to going out
+  const spot = { hand: h('5c 6s 8d 9h 10c Js Qd Kh Ac 2s'), table: { ...ev('4s'), by: 1 }, seat: 0, mustOpen: false, counts: [10, 9, 9, 9], passed: [false, false, false, false], level: 'normal' };
+  const passes = (style) => { let n = 0; for (let i = 0; i < 300; i++) if (!Bot.choose({ ...spot, style })) n++; return n; };
+  assert.equal(passes('steady'), 0); assert.equal(passes('rusher'), 0);
+  const bluffs = passes('trickster');
+  assert.ok(bluffs > 100 && bluffs < 200, 'the trickster bluffed ' + bluffs + ' of 300');
+  // over many deals: how often each style lets a trick go although it could have played
+  const real = Bot.choose, rate = {};
+  for (const style of Bot.STYLES) {
+    let pass = 0, could = 0;
+    Bot.choose = (view) => { const c = real({ ...view, style: view.seat === 0 ? style : 'steady' }); if (view.seat === 0 && view.table && E.legalPlays(view.hand, view.table, false).length) { could++; if (!c) pass++; } return c; };
+    for (let r = 0; r < 250; r++) { const t2 = TableCore.create({ rounds: 1, botMs: [1, 2], emotes: false }, 0); t2.startMatch(0); let g = 0; while (t2.s.phase === 'playing' && g++ < 600) t2.autoMove(t2.s.turn, true, 0); }
+    rate[style] = pass / could;
+  }
+  Bot.choose = real;
+  assert.ok(rate.rusher < rate.steady - 0.1, 'rusher ' + rate.rusher.toFixed(2) + ' vs steady ' + rate.steady.toFixed(2));
+  assert.ok(rate.hoarder > rate.steady + 0.1, 'hoarder ' + rate.hoarder.toFixed(2) + ' vs steady ' + rate.steady.toFixed(2));
+  assert.ok(rate.trickster > rate.steady, 'trickster ' + rate.trickster.toFixed(2) + ' vs steady ' + rate.steady.toFixed(2));
+});
+
+// The tutorial: every lesson can be played through by doing what the coach asks,
+// wrong moves are refused with a nudge, and each one ends with you going out.
+{
+  const { Tutorial } = globalThis.Pusoy;
+  const warn = console.warn; let warned = '';
+  console.warn = (...a) => { warned += a.join(' '); };
+  const errors = []; let last = null, moves = 0, refused = 0;
+  const done = await new Promise((resolve) => {
+    const finished = [];
+    const session = Tutorial.start({ name: 'Learner', av: 0 }, {
+      onError: (msg) => errors.push(msg),
+      onState: (v) => {
+        last = v;
+        const tu = v.tutor;
+        assert.ok(tu && tu.text.length > 10 && !/\{\d\}/.test(tu.text), 'the coach always has something to say');
+        assert.equal(v.aids, false);
+        if (tu.done) {
+          assert.equal(v.result.winner, 0, 'lesson ' + (tu.lesson + 1) + ' ends with you going out');
+          assert.ok(v.seats.slice(1).every((x) => x.n > 0));
+          finished.push(tu.lesson);
+          if (tu.last) { session.close(); return resolve(finished); }
+          return setTimeout(() => session.send({ t: 'next' }), 1);
+        }
+        if (!tu.want || v.turn !== 0) return;
+        setTimeout(() => {
+          if (last !== v) return;
+          // first something the coach did not ask for...
+          const before = errors.length;
+          if (tu.want === 'pass') session.send({ t: 'play', cards: [v.hand[0]] }); else session.send({ t: 'pass' });
+          assert.equal(errors.length, before + 1, 'a wrong move is refused'); refused++;
+          assert.equal(last, v, 'and changes nothing');
+          // ...then the right move
+          moves++;
+          if (tu.want === 'pass') session.send({ t: 'pass' });
+          else { assert.ok(E.check(tu.want, v.table, v.mustOpen).ok, 'the coach only asks for legal plays'); session.send({ t: 'play', cards: tu.want }); }
+        }, 1);
+      }
+    }, { pace: 400 });
+  });
+  console.warn = warn;
+  assert.deepEqual(done, [0, 1, 2, 3]);
+  assert.equal(warned, '', 'the scripts never fall out of step with the table');
+  assert.ok(moves >= 15 && refused === moves);
+  n++;
+}
 
 console.log(`rules: ${n} groups of checks passed`);

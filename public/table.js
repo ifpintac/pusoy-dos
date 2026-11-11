@@ -9,6 +9,14 @@
   var E = P.Engine, Bot = P.Bot;
 
   var BOT_NAMES = ['Ace', 'Blitz', 'Pixel', 'Turbo', 'Nova', 'Dash', 'Jinx', 'Rook'];
+  /* Every bot has a way of playing (see bot.js): steady, a rusher who throws big cards
+   * early, a hoarder who sits on them, or a trickster who passes early to hide a hand. */
+  var BOT_STYLE = { Ace: 'steady', Dash: 'steady', Blitz: 'rusher', Turbo: 'rusher', Rook: 'hoarder', Nova: 'hoarder', Jinx: 'trickster', Pixel: 'trickster' };
+  /* The reactions a player can send. Only the number travels, never text. */
+  var REACTIONS = ['\uD83D\uDC4D', '\uD83D\uDE02', '\uD83D\uDE31', '\uD83D\uDD25', '\uD83D\uDE2D', '\uD83D\uDC4F', '\uD83D\uDE0E', '\uD83E\uDD14', '\uD83C\uDF45', '\u2764\uFE0F'];
+  var R = { up: 0, laugh: 1, shock: 2, fire: 3, cry: 4, clap: 5, cool: 6, hmm: 7, tomato: 8, heart: 9 };
+  var READY_MS = 20000;     // once somebody is ready, the rest get this long before the deal goes ahead anyway
+  var REACT_GAP_MS = 500;
   var AWAY_MS = 45000;      // a dropped player keeps their seat this long
   var EMPTY_MS = 60000;     // a table with nobody connected closes after this
   var NEXT_ROUND_MS = 11000;
@@ -40,11 +48,16 @@
         aids: !!o.aids,                               // solo only: hints, quick picks and the cards-played tracker
         bots: Bot.LEVELS.indexOf(o.bots) >= 0 ? o.bots : 'normal',   // easy | normal | hard
         think: clampInt(o.think, 0, 200, 0),          // ms a hard bot may spend looking ahead on each move
+        readyMs: clampInt(o.readyMs, 20, 120000, READY_MS),
+        emotes: o.emotes !== false,                   // bots send the odd reaction of their own
         botMs: o.botMs || [800, 1500]
       },
       seats: [0, 1, 2, 3].map(function (i) {
-        return { pid: null, name: BOT_NAMES[pick[i]], botName: BOT_NAMES[pick[i]], av: i, bot: true, on: false, awayAt: 0, afk: 0, chatAt: 0 };
+        return { pid: null, name: BOT_NAMES[pick[i]], botName: BOT_NAMES[pick[i]], av: i, bot: true, on: false, awayAt: 0, afk: 0, chatAt: 0, ready: false, reactAt: 0 };
       }),
+      series: [0, 0, 0, 0],       // matches won in a row of rematches, by seat
+      readyAt: 0,                 // when the deal goes ahead without the players who are not ready
+      reacts: [],                 // bot reactions waiting for their moment: { at, seat, e, to }
       phase: 'waiting',           // waiting | playing | roundEnd | matchEnd
       round: 0,
       scores: [0, 0, 0, 0],
@@ -106,6 +119,7 @@
       while (taken.indexOf(name.toLowerCase()) >= 0) name = base.slice(0, 14) + ' ' + n++;
       seat = s.seats[i];
       seat.pid = pid; seat.name = name; seat.av = av; seat.bot = false; seat.on = true; seat.awayAt = 0; seat.afk = 0;
+      seat.ready = false; s.series[i] = 0;
       this.emit({ k: 'join', seat: i, name: name });
     }
     s.closeAt = 0;
@@ -122,6 +136,7 @@
     this.emit({ k: 'away', seat: i });
     if (s.phase === 'playing' && s.turn === i) this.schedule(now, 0);
     if (!this.online()) s.closeAt = now + EMPTY_MS;
+    this.checkReady(now);
     s.seq++;
   };
 
@@ -134,7 +149,9 @@
     var s = this.s, seat = s.seats[i];
     this.emit({ k: 'leave', seat: i, name: seat.name });
     seat.pid = null; seat.name = seat.botName; seat.bot = true; seat.on = false; seat.awayAt = 0; seat.afk = 0;
+    seat.ready = false; s.series[i] = 0;
     if (s.phase === 'playing' && s.turn === i) this.schedule(now, 0);
+    this.checkReady(now);
     if (!this.humans()) { s.closeAt = now; }
     else if (!this.online()) s.closeAt = now + EMPTY_MS;
     s.seq++;
@@ -147,9 +164,22 @@
     if (i < 0 || !msg) return { error: 'not seated' };
     var seat = s.seats[i];
     switch (msg.t) {
-      case 'start':
+      case 'start':            // alone at the table: deal. With company it counts as "I'm ready".
+      case 'ready':
         if (s.phase !== 'waiting' && s.phase !== 'matchEnd') return { error: 'already playing' };
-        this.startMatch(now);
+        if (msg.t === 'start' && this.online() <= 1) { this.startMatch(now); return {}; }
+        seat.ready = msg.t === 'start' || msg.on !== false;
+        this.emit({ k: 'ready', seat: i, on: seat.ready });
+        this.checkReady(now);
+        s.seq++;
+        return {};
+      case 'react':
+        if (!(msg.e >= 0 && msg.e < REACTIONS.length) || msg.e !== Math.floor(msg.e)) return { error: 'unknown reaction' };
+        if (now - seat.reactAt < REACT_GAP_MS) return {};
+        seat.reactAt = now;
+        var to = msg.to >= 0 && msg.to <= 3 && msg.to === Math.floor(msg.to) && msg.to !== i ? msg.to : -1;
+        this.emit({ k: 'react', seat: i, e: msg.e, to: to });
+        if (to >= 0 && s.seats[to].bot) this.botReply(to, i, msg.e, now);
         return {};
       case 'next':
         if (s.phase !== 'roundEnd' || !s.opts.manualNext) return { error: 'not now' };
@@ -175,10 +205,56 @@
 
   /* ---------- the game ---------- */
 
+  /* Ready-up, before the first deal and for a rematch. The cards are dealt as soon as
+   * every connected player is ready; once one is, the others get readyMs to catch up. */
+  T.checkReady = function (now) {
+    var s = this.s;
+    if (s.phase !== 'waiting' && s.phase !== 'matchEnd') return;
+    var here = 0, ready = 0;
+    s.seats.forEach(function (x) { if (!x.bot && x.on) { here++; if (x.ready) ready++; } });
+    if (ready && ready === here) return this.startMatch(now);
+    if (!ready) s.readyAt = 0;
+    else if (!s.readyAt) s.readyAt = now + s.opts.readyMs;
+  };
+
   T.startMatch = function (now) {
     var s = this.s;
     s.round = 0; s.scores = [0, 0, 0, 0]; s.wins = [0, 0, 0, 0]; s.lastWinner = -1;
+    s.readyAt = 0; s.seats.forEach(function (x) { x.ready = false; });
     this.nextRound(now);
+  };
+
+  /* ---------- bots with a bit of life: the odd reaction, in character ---------- */
+
+  T.queueReact = function (seat, e, now, to, wait) {
+    var s = this.s, x = s.seats[seat];
+    if (!s.opts.emotes || !x.bot || now - x.reactAt < 5000) return;
+    x.reactAt = now;
+    s.reacts.push({ at: now + (wait || 700) + E.randInt(500), seat: seat, e: e, to: to === undefined ? -1 : to });
+  };
+  function chance(p) { return E.randInt(1000) < p * 1000; }
+  /* Somebody played: who has something to say about it? */
+  T.botMoods = function (by, c, now) {
+    var s = this.s, style = BOT_STYLE[s.seats[by].botName], twos = c.cards.filter(function (id) { return id >= 48; }).length;
+    var big = c.cards.indexOf(51) >= 0, strong = c.size === 5 && c.tier >= 3;
+    if (s.seats[by].bot && (twos || strong) && chance(style === 'rusher' ? 0.5 : 0.22)) this.queueReact(by, style === 'rusher' ? R.fire : R.cool, now, -1, 900);
+    for (var k = 1; k < 4; k++) {
+      var o = (by + k) % 4, st = BOT_STYLE[s.seats[o].botName];
+      if (!s.seats[o].bot) continue;
+      if (big && chance(0.35)) { this.queueReact(o, R.shock, now, -1, 1700); break; }
+      if (strong && chance(0.14)) { this.queueReact(o, st === 'trickster' ? R.laugh : R.clap, now, -1, 900); break; }
+      if (s.hands[by].length === 1 && chance(0.2)) { this.queueReact(o, st === 'hoarder' ? R.hmm : R.shock, now, -1, 800); break; }
+    }
+  };
+  /* A player aimed a reaction at a bot. Most of the time it answers. */
+  T.botReply = function (bot, from, e, now) {
+    var style = BOT_STYLE[this.s.seats[bot].botName];
+    if (!chance(0.7)) return;
+    var back = e === R.tomato ? (style === 'rusher' ? R.tomato : style === 'trickster' ? R.laugh : R.cry)
+      : e === R.heart || e === R.up || e === R.clap ? (style === 'hoarder' ? R.cool : R.heart)
+      : e === R.laugh ? (style === 'rusher' ? R.fire : R.laugh) : R.hmm;
+    this.s.seats[bot].reactAt = 0;                 // a direct answer is never held back
+    this.queueReact(bot, back, now, back === R.tomato ? from : -1, 600);
   };
 
   T.nextRound = function (now) {
@@ -233,6 +309,7 @@
     s.seen = (s.seen || []).concat(c.cards);
     if (!s.opts.passLock) s.passed = [false, false, false, false];
     this.emit({ k: 'play', seat: i, cards: c.cards, name: c.name, type: c.type, left: s.hands[i].length });
+    this.botMoods(i, c, now);
     s.seq++;
 
     if (!s.hands[i].length) { this.endRound(i, now); return {}; }
@@ -288,12 +365,19 @@
     s.result = { winner: winner, left: left, delta: delta, hands: s.hands.map(function (h) { return h.slice(); }), champ: -1 };
     s.phase = last ? 'matchEnd' : 'roundEnd';
     this.emit({ k: 'roundEnd', winner: winner });
+    for (i = 0; i < 4; i++) {
+      if (!s.seats[i].bot) continue;
+      if (i === winner) { if (chance(0.45)) this.queueReact(i, BOT_STYLE[s.seats[i].botName] === 'trickster' ? R.laugh : R.cool, now, -1, 2200); }
+      else if (left[i] >= 10 && chance(0.5)) this.queueReact(i, R.cry, now, -1, 2400);
+      else if (!s.seats[winner].bot && chance(0.2)) this.queueReact(i, R.clap, now, -1, 2400);
+    }
     if (last) {
       var champ = 0;
       for (i = 1; i < 4; i++) {
         if (s.scores[i] > s.scores[champ] || (s.scores[i] === s.scores[champ] && s.wins[i] > s.wins[champ])) champ = i;
       }
       s.result.champ = champ;
+      for (i = 0; i < 4; i++) s.series[i] = i === champ ? s.series[i] + 1 : 0;      // a winning streak across rematches
       this.emit({ k: 'matchEnd', champ: champ });
       var humans = this.humans();
       for (i = 0; i < 4; i++) {
@@ -318,7 +402,8 @@
         seen: s.seen || [],                    // public knowledge: a card counter would know it too
         passLock: s.opts.passLock, think: s.opts.think || 0,
         // a bot seat plays at the table's level; covering for a player who stepped away is always "normal"
-        level: s.seats[i].bot ? s.opts.bots : 'normal'
+        level: s.seats[i].bot ? s.opts.bots : 'normal',
+        style: s.seats[i].bot ? BOT_STYLE[s.seats[i].botName] : 'steady'
       });
     } else if (!s.table) {
       cards = [s.hands[i][0]];               // on the lead: lowest card (the 3 of clubs when opening)
@@ -341,6 +426,14 @@
     }
     if (s.closeAt && now >= s.closeAt) { this.closed = true; return; }
     if (!this.online()) return;              // nobody watching: freeze until someone is back
+    if (s.reacts.length) {                   // bot reactions whose moment has come
+      var due = s.reacts.filter(function (r) { return r.at <= now; }), self = this;
+      if (due.length) {
+        s.reacts = s.reacts.filter(function (r) { return r.at > now; });
+        due.forEach(function (r) { if (s.seats[r.seat].bot) self.emit({ k: 'react', seat: r.seat, e: r.e, to: r.to }); });
+      }
+    }
+    if (s.readyAt && now >= s.readyAt && (s.phase === 'waiting' || s.phase === 'matchEnd')) { this.startMatch(now); return; }
     if (s.phase === 'playing' && s.turn >= 0) {
       var guard = 0;
       while (s.phase === 'playing' && guard++ < 8) {
@@ -370,6 +463,8 @@
       if (s.actAt) w.push(s.actAt);
       if (s.turnAt) w.push(s.turnAt);
       if (s.nextAt) w.push(s.nextAt);
+      if (s.readyAt) w.push(s.readyAt);
+      s.reacts.forEach(function (r) { w.push(r.at); });
     }
     return w.length ? Math.min.apply(null, w) : 0;
   };
@@ -391,12 +486,13 @@
       bots: s.opts.bots || 'normal',
       phase: s.phase, round: s.round, you: i, seq: s.seq,
       seats: s.seats.map(function (x, k) {
-        return { name: x.name, av: x.av, bot: x.bot, on: x.bot || x.on, n: s.hands[k].length, passed: s.passed[k], score: s.scores[k], wins: s.wins[k] };
+        return { name: x.name, av: x.av, bot: x.bot, on: x.bot || x.on, n: s.hands[k].length, passed: s.passed[k], score: s.scores[k], wins: s.wins[k],
+          ready: x.bot || !!x.ready, series: s.series[k], style: x.bot ? BOT_STYLE[x.botName] || 'steady' : '' };
       }),
       hand: i >= 0 ? s.hands[i] : [],
       turn: s.turn, table: s.table, trick: s.trick.slice(-2), mustOpen: s.mustOpen,
       aids: !!s.opts.aids, seen: s.opts.aids ? (s.seen || []) : [],     // live tables never send the played-cards list
-      turnAt: s.turnAt, nextAt: s.nextAt, now: now,
+      turnAt: s.turnAt, nextAt: s.nextAt, readyAt: s.readyAt, now: now,
       result: (s.phase === 'roundEnd' || s.phase === 'matchEnd') ? s.result : null
     };
   };
@@ -413,5 +509,7 @@
 
   P.TableCore = TableCore;
   P.BOT_NAMES = BOT_NAMES;
+  P.BOT_STYLE = BOT_STYLE;
+  P.REACTIONS = REACTIONS;
   P.cleanText = cleanText;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

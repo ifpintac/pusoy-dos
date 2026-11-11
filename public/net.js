@@ -113,8 +113,9 @@
   }
 
   /* ---------- a seat at a live table ---------- */
-  function online(code, profile, h) {
-    if (mode() === 'p2p') return P.P2P.get().online(code, profile, h);
+  /* `opts.watch` (player-hosted tables only): look on without taking a seat. */
+  function online(code, profile, h, opts) {
+    if (mode() === 'p2p') return P.P2P.get().online(code, profile, h, opts);
     var base = serverBase();
     var sock = socket(function () {
       return base && base + '/api/table/' + encodeURIComponent(code) +

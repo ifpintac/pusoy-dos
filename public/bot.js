@@ -10,6 +10,13 @@
  *         looks ahead: it deals the unseen cards out at random a number of times,
  *         plays each of its options through to the end of the round, and keeps the
  *         one that scores best. It never looks at anybody's actual hand.
+ * On top of the level, every bot has a style (`view.style`), so the same level plays
+ * differently from seat to seat:
+ *   steady     the plain plan
+ *   rusher     hates passing, leads its pairs and big hands early, spends 2s freely
+ *   hoarder    passes a lot while its hand is full and sits on pairs and 2s for the endgame
+ *   trickster  often passes early although it could play, to hide what it holds
+ *
  * easy    Forgiving on purpose. It often lets a trick go even though it could play,
  *         hangs on to its big cards for too long, leads one card at a time even
  *         when it holds a pair, rarely spots a five-card hand, and never notices
@@ -255,9 +262,21 @@
     return basic(view, null);
   }
 
+  /* How each style bends the plan:
+   *   pass    added to the price of passing (higher = plays more)   early: only while its hand is this full
+   *   twos    how reluctant it is to spend a 2                      bluff: chance of an early pass for show
+   *   lead    what it prefers to lead: +1 sets first, -1 singles first */
+  var STYLES = {
+    steady: { pass: 0, early: 0, twos: 1, bluff: 0, lead: 0 },
+    rusher: { pass: 1.1, early: 0, twos: 0, bluff: 0, lead: 1 },
+    hoarder: { pass: -0.5, early: 8, twos: 2.5, bluff: 0, lead: -1 },
+    trickster: { pass: 0.15, early: 0, twos: 1, bluff: 0.5, lead: 0 }
+  };
+
   /* The planner. `k` is what a card counter knows, or null for a normal bot. */
   function basic(view, k) {
     var hand = view.hand, seat = view.seat, counts = view.counts;
+    var st = STYLES[view.style] || STYLES.steady;
     var others = [], i;
     for (i = 1; i < 4; i++) {
       var s = (seat + i) % 4;
@@ -267,7 +286,7 @@
     others.forEach(function (o) { if (o.n < minOpp) minOpp = o.n; if (!next && !o.passed) next = o; });
     var nextN = next ? next.n : 13;
     var myPlan = plan(hand, k);
-    return view.table ? follow(view, myPlan, minOpp, nextN, k) : lead(view, myPlan, minOpp, nextN, k);
+    return view.table ? follow(view, myPlan, minOpp, nextN, k, st) : lead(view, myPlan, minOpp, nextN, k, st);
   }
 
   /* ---- looking ahead (hard bots with time to think) ---- */
@@ -354,7 +373,8 @@
       worlds++;
     }
     // Trust the planner unless something else is clearly better: few deals means a noisy answer.
-    var best = 0, margin = (worlds < 4 ? 1.5 : worlds < 8 ? 0.75 : 0.25) * worlds;
+    // A bot with a style of its own needs more convincing before it plays out of character.
+    var best = 0, margin = (worlds < 4 ? 1.5 : worlds < 8 ? 0.75 : 0.25) * worlds * (view.style && view.style !== 'steady' ? 2.5 : 1);
     for (i = 1; i < opts.length; i++) if (total[i] > total[best]) best = i;
     return best && total[best] - total[0] > margin ? opts[best] : opts[0];
   }
@@ -382,7 +402,9 @@
       if (n > EASY.nerve) {
         var top = rankOf(pick.cards[pick.cards.length - 1]);
         var chance = table.size === 5 ? EASY.passFive : top === 12 ? EASY.passTwo : top >= 8 ? EASY.passFace : EASY.pass;
-        if (Math.random() < chance) return null;
+        // styles show even here: a rusher passes less, a hoarder more, a trickster a lot while its hand is full
+        chance *= view.style === 'rusher' ? 0.86 : view.style === 'hoarder' ? 1.12 : view.style === 'trickster' && n >= 10 ? 1.25 : 1;
+        if (Math.random() < Math.min(0.92, chance)) return null;
       }
       return pick.cards;
     }
@@ -398,8 +420,9 @@
     return low.cards;
   }
 
-  function lead(view, myPlan, minOpp, nextN, k) {
+  function lead(view, myPlan, minOpp, nextN, k, st) {
     var groups = myPlan.groups;
+    st = st || STYLES.steady;
     if (view.mustOpen) {
       var open = groups.filter(function (h) { return h.cards.indexOf(E.THREE_OF_CLUBS) >= 0; })[0];
       return open ? open.cards : [E.THREE_OF_CLUBS];
@@ -432,16 +455,21 @@
       var all1 = groups.filter(function (h) { return h.size === 1; });
       return lowestBy(all1, function (h) { return -h.power; }).cards;
     }
-    if (fives.length) return lowestBy(fives, function (h) { return h.power; }).cards;
+    // a hoarder keeps its five-card hands back while it still has small stuff to shed
+    if (fives.length && !(st.lead < 0 && small.length && view.hand.length > 8)) return lowestBy(fives, function (h) { return h.power; }).cards;
     // Otherwise open with the lowest thing we hold; bigger groups win ties.
     if (minOpp === 2 && singles.length) small = singles.concat(multi.filter(function (h) { return h.size === 3; })) ;
-    return lowestBy(small, function (h) { return rankOf(h.cards[0]) * 10 - h.size; }).cards;
+    // (a rusher reaches for its pairs and triples first, a hoarder for its singles)
+    return lowestBy(small, function (h) { return rankOf(h.cards[0]) * 10 - h.size * (1 + st.lead * 14); }).cards;
   }
 
-  function follow(view, myPlan, minOpp, nextN, k) {
+  function follow(view, myPlan, minOpp, nextN, k, st) {
     var hand = view.hand, table = view.table;
     var legal = E.legalPlays(hand, table, false);
     if (!legal.length) return null;
+    st = st || STYLES.steady;
+    // the trickster's bluff: a full hand, nobody close to going out, and it lets the trick go anyway
+    if (st.bluff && hand.length >= 9 && minOpp > 4 && legal[0].cards.length < hand.length && Math.random() < st.bluff) return null;
 
     var base = myPlan.cost;
     var threat = minOpp <= 2;
@@ -459,7 +487,7 @@
       var twos = 0;
       h.cards.forEach(function (id) { if (rankOf(id) === 12) twos++; });
       // don't spend 2s on small stuff while the game is young
-      if (twos && !threat && hand.length > 6 && tableRank < 9) c += 0.6 * twos;
+      if (twos && !threat && hand.length > 6 && tableRank < 9) c += 0.6 * st.twos * twos;
       c += 0.1 * (h.power - lo) / span;
       // the next player is on one card: block with the biggest single we have
       if (table.size === 1 && nextN === 1) c = -10 - h.power / 100;
@@ -470,10 +498,11 @@
     if (hand.length <= 5 || myPlan.groups.length <= 3) passCost = -0.2;
     if (threat) passCost = 0.6;
     if (minOpp === 1) passCost = 2;
+    else if (!threat && hand.length >= st.early) passCost += st.pass;     // in character, until somebody is about to go out
     return bestCost < passCost ? best.cards : null;
   }
 
   var LEVELS = ['easy', 'normal', 'hard'];
 
-  P.Bot = { choose: choose, plan: plan, LEVELS: LEVELS, knowledge: knowledge, unbeatable: unbeatable, EASY: EASY };
+  P.Bot = { choose: choose, plan: plan, LEVELS: LEVELS, knowledge: knowledge, unbeatable: unbeatable, EASY: EASY, STYLES: Object.keys(STYLES) };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

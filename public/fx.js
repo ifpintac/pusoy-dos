@@ -155,11 +155,12 @@
     kick();
   }
   /* A spinning sunburst behind the pile. `host` is the playfield; x/y are pixels inside it. */
-  function rays(host, x, y) {
+  function rays(host, x, y, color) {
     if (calm || lite || quality < 0.5 || !host) return;
     var el = document.createElement('div');
-    el.className = 'rays';
+    el.className = 'rays' + (color ? ' tint' : '');
     el.style.setProperty('--x', x + 'px'); el.style.setProperty('--y', y + 'px');
+    if (color) el.style.setProperty('--ray', color);
     host.appendChild(el);
     setTimeout(function () { el.remove(); }, 2100);
   }
